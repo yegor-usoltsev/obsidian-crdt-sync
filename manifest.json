@@ -1,7 +1,7 @@
 {
   "id": "crdt-sync",
   "name": "CRDT Sync",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "minAppVersion": "1.11.4",
   "description": "Real-time sync of Obsidian vaults across devices using conflict-free replicated data types (CRDTs)",
   "author": "Yegor Usoltsev",
