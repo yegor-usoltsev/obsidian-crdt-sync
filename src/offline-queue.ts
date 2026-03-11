@@ -1,4 +1,4 @@
-import { fromByteArray, toByteArray } from "base64-js";
+import { fromBase64, toBase64 } from "lib0/buffer";
 import type { Component, Debouncer } from "obsidian";
 import * as Y from "yjs";
 import type { PluginLogger } from "./logger";
@@ -38,7 +38,7 @@ export class OfflineQueue {
     this.updateHandler = (update: Uint8Array, origin: unknown) => {
       if (origin !== "local") return;
       this.pendingUpdates.push({
-        update: fromByteArray(update),
+        update: toBase64(update),
         timestamp: Date.now(),
       });
       this.compact();
@@ -58,7 +58,7 @@ export class OfflineQueue {
       Y.applyUpdate(
         this.ydoc,
         Y.mergeUpdates(
-          this.pendingUpdates.map(({ update }) => toByteArray(update)),
+          this.pendingUpdates.map(({ update }) => fromBase64(update)),
         ),
       );
     } catch (err) {
@@ -93,9 +93,9 @@ export class OfflineQueue {
     }
 
     try {
-      const mergedBase64 = fromByteArray(
+      const mergedBase64 = toBase64(
         Y.mergeUpdates(
-          this.pendingUpdates.map(({ update }) => toByteArray(update)),
+          this.pendingUpdates.map(({ update }) => fromBase64(update)),
         ),
       );
       if (mergedBase64.length > MAX_BYTES) {
