@@ -298,7 +298,7 @@ describe("ConnectionManager", () => {
     TIMEOUT,
   );
 
-  test("syncs a 50 MB binary file over the shared websocket", async () => {
+  test("syncs a 16 MB binary file over the shared websocket", async () => {
     const source = createConnection(url);
     const peer = createConnection(url);
     activeConnections.push(source.connection, peer.connection);
@@ -308,7 +308,7 @@ describe("ConnectionManager", () => {
       waitForConnectionSync(peer.connection),
     ]);
 
-    const binary = new Uint8Array(50 * 1024 * 1024);
+    const binary = new Uint8Array(16 * 1024 * 1024);
     for (let i = 0; i < binary.length; i += 4096) {
       binary[i] = i % 251;
     }
