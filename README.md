@@ -25,12 +25,6 @@ Open **Settings → CRDT Sync** and fill in:
 | **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
 | **Debug logging** | Enable verbose console logs for troubleshooting                                                        |
 
-Generate a token with:
-
-```sh
-openssl rand -base64 32
-```
-
 After saving, the plugin connects automatically. Sync status is shown in the status bar (`Sync: ok`, `Sync: syncing`, `Sync: offline`, `Sync: error`). Use the ribbon icon or **Run full sync** command to force a full reconciliation.
 
 ## How it works
@@ -48,7 +42,7 @@ After saving, the plugin connects automatically. Sync status is shown in the sta
 - **Data loss**: This is early-stage software. Bugs in sync logic could corrupt or lose vault data. Always maintain independent backups.
 - **Server trust**: All vault content is transmitted to and stored on your self-hosted server in plaintext (beyond TLS). Whoever controls the server can read your entire vault.
 - **TLS required**: Always use `wss://` for remote servers. The plugin enforces this and rejects `ws://` for non-localhost addresses.
-- **Auth token**: The shared token is the only authentication factor. Use a strong random value (`openssl rand -base64 32`) and keep it secret. It is stored in Obsidian's secure storage and never written to the data file.
+- **Auth token**: The shared token is the only authentication factor. Use a strong random value generated during server setup and keep it secret. It is stored in Obsidian's secure storage and never written to the data file.
 - **Protocol stability**: The sync protocol and storage format may change in breaking ways between releases while the project is in early development.
 
 ## Releasing
