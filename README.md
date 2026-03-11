@@ -1,8 +1,7 @@
 # obsidian-crdt-sync
 
-[![CI](https://github.com/yegor-usoltsev/obsidian-crdt-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/yegor-usoltsev/obsidian-crdt-sync/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/yegor-usoltsev/obsidian-crdt-sync)](https://github.com/yegor-usoltsev/obsidian-crdt-sync/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Build Status](https://github.com/yegor-usoltsev/obsidian-crdt-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/yegor-usoltsev/obsidian-crdt-sync/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/yegor-usoltsev/obsidian-crdt-sync?sort=semver)](https://github.com/yegor-usoltsev/obsidian-crdt-sync/releases)
 
 > ⚠️ **Early development** — This plugin is in active early development. Use at your own risk and **back up your vault before enabling it**.
 
@@ -20,11 +19,11 @@ The plugin is not yet listed in the Obsidian Community Plugins directory. Instal
 
 Open **Settings → CRDT Sync** and fill in:
 
-| Setting | Description |
-|---|---|
-| **Server URL** | WebSocket URL of your server, e.g. `wss://sync.example.com`. Use `ws://` for localhost only. |
-| **Auth Token** | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
-| **Debug logging** | Enable verbose console logs for troubleshooting |
+| Setting           | Description                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| **Server URL**    | WebSocket URL of your server, e.g. `wss://sync.example.com`. Use `ws://` for localhost only.           |
+| **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
+| **Debug logging** | Enable verbose console logs for troubleshooting                                                        |
 
 Generate a token with:
 
@@ -52,10 +51,34 @@ After saving, the plugin connects automatically. Sync status is shown in the sta
 - **Auth token**: The shared token is the only authentication factor. Use a strong random value (`openssl rand -base64 32`) and keep it secret. It is stored in Obsidian's secure storage and never written to the data file.
 - **Protocol stability**: The sync protocol and storage format may change in breaking ways between releases while the project is in early development.
 
+## Releasing
+
+Create a release from a clean `main` branch:
+
+```sh
+bun run release patch
+# or: bun run release minor
+# or: bun run release major
+```
+
+The local release script updates `manifest.json` and `versions.json`, creates a `release: vX.Y.Z` commit, creates the matching Git tag, and pushes both `main` and the tag to GitHub.
+
+The GitHub Actions release workflow then runs [GoReleaser](https://goreleaser.com/) on that tag. GoReleaser installs dependencies, builds `main.js`, creates the GitHub release, and uploads `main.js`, `manifest.json`, and `versions.json` as release assets.
+
+For a local dry run of the release packaging:
+
+```sh
+goreleaser release --snapshot --clean
+```
+
+## Versioning
+
+This project uses [Semantic Versioning](https://semver.org). Release tags use the `vX.Y.Z` format, while the plugin manifest uses the plain `X.Y.Z` version string required by Obsidian.
+
 ## Contributing
 
-Open an issue or pull request.
+Pull requests are welcome. For larger changes, open an issue first so the release format, protocol compatibility, and migration impact can be discussed before implementation.
 
 ## License
 
-[MIT](LICENSE) © [Yegor Usoltsev](https://github.com/yegor-usoltsev)
+[MIT](https://github.com/yegor-usoltsev/obsidian-crdt-sync/blob/main/LICENSE)

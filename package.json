@@ -1,6 +1,7 @@
 {
   "name": "obsidian-crdt-sync",
   "private": true,
+  "packageManager": "bun@1.3.10",
   "type": "module",
   "module": "src/main.ts",
   "scripts": {
@@ -8,6 +9,7 @@
     "check": "biome check --write .",
     "dev": "bun build src/main.ts --outfile=main.js --format=cjs --target=browser --minify --external=obsidian --external=electron --external=@codemirror/autocomplete --external=@codemirror/collab --external=@codemirror/commands --external=@codemirror/language --external=@codemirror/lint --external=@codemirror/search --external=@codemirror/state --external=@codemirror/view --external=@lezer/common --external=@lezer/highlight --external=@lezer/lr --watch",
     "prepare": "husky",
+    "release": "bun run release.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

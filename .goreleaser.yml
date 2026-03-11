@@ -1,0 +1,29 @@
+---
+version: 2
+
+project_name: obsidian-crdt-sync
+
+before:
+  hooks:
+    - bun install --frozen-lockfile
+    - bun run build
+
+builds:
+  - id: plugin-assets
+    builder: bun
+    main: src/main.ts
+    binary: ignored
+    skip: true
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: yegor-usoltsev
+    name: obsidian-crdt-sync
+  name_template: "v{{ .Version }}"
+  extra_files:
+    - glob: ./main.js
+    - glob: ./manifest.json
+    - glob: ./versions.json
