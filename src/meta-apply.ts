@@ -1,4 +1,4 @@
-import type { App, Component, Vault } from "obsidian";
+import type { App, Component } from "obsidian";
 import { dirname, isAbsolute, normalize } from "pathe";
 import * as v from "valibot";
 import * as Y from "yjs";
@@ -147,7 +147,9 @@ export function createObsidianVaultFacade(app: App): SyncedVaultFacade {
         }
         try {
           await vault.createFolder(current);
-        } catch {}
+        } catch {
+          // Folder may already exist due to a concurrent create
+        }
       }
     },
   };
