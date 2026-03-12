@@ -7,6 +7,8 @@
 
 An [Obsidian](https://obsidian.md) plugin that syncs your vault across devices in real time using [Yjs](https://github.com/yjs/yjs) conflict-free replicated data types (CRDTs). Requires a self-hosted [obsidian-crdt-sync-server](https://github.com/yegor-usoltsev/obsidian-crdt-sync-server).
 
+![Demo](https://raw.githubusercontent.com/yegor-usoltsev/obsidian-crdt-sync/refs/heads/main/.github/demo.gif)
+
 ## Installation
 
 The plugin is not yet listed in the Obsidian Community Plugins directory. Install manually:
