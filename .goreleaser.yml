@@ -31,4 +31,5 @@ release:
   extra_files:
     - glob: ./main.js
     - glob: ./manifest.json
+    - glob: ./styles.css
     - glob: ./versions.json

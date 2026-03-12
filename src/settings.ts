@@ -155,9 +155,6 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
     const errorEl = setting.settingEl.createDiv({
       cls: "crdt-sync-field-error",
     });
-    errorEl.style.color = "var(--text-error)";
-    errorEl.style.fontSize = "0.85em";
-    errorEl.style.marginTop = "4px";
     errorEl.setText(error);
   }
 }

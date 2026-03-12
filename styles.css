@@ -1,0 +1,5 @@
+.crdt-sync-field-error {
+  color: var(--text-error);
+  font-size: var(--font-smallest);
+  margin-top: var(--size-2-2);
+}
