@@ -131,7 +131,7 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Debug logging")
-      .setDesc("Log sync events to the developer console (disabled by default)")
+      .setDesc("Log sync events to the developer console.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.debugLogging)
