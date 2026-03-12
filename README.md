@@ -39,7 +39,7 @@ Open **Settings → Real-Time CRDT Sync** and fill in:
 | **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
 | **Debug logging** | Enable verbose console logs for troubleshooting                                                        |
 
-After saving, the plugin connects automatically. Sync status is shown in the status bar (`Sync: ok`, `Sync: syncing`, `Sync: offline`, `Sync: error`). Use the ribbon icon or **Run full sync** command to force a full reconciliation.
+After saving, the plugin connects automatically. Sync status is shown in the status bar (`CRDT Sync: connected`, `syncing`, `offline`, `error`). Hover the status bar item for details. Use the ribbon icon or **Run full sync** command to force a full reconciliation.
 
 ## In practice
 
@@ -65,7 +65,7 @@ bun run release patch
 
 The local release script updates `manifest.json` and `versions.json`, creates a `Release: X.Y.Z` commit, creates the matching `X.Y.Z` Git tag, and pushes both `main` and the tag to GitHub.
 
-The GitHub Actions release workflow then runs [GoReleaser](https://goreleaser.com/) on that tag. GoReleaser installs dependencies, builds `main.js`, creates the GitHub release, and uploads `main.js`, `manifest.json`, and `versions.json` as release assets.
+The GitHub Actions release workflow then runs [GoReleaser](https://goreleaser.com/) on that tag. GoReleaser installs dependencies, builds `main.js`, creates the GitHub release, and uploads `main.js`, `manifest.json`, `styles.css`, and `versions.json` as release assets.
 
 For a local dry run of the release packaging:
 
