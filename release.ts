@@ -89,7 +89,7 @@ async function main() {
   await Bun.write(versionsPath, formatJson(versions));
 
   await gitOutput(["add", "manifest.json", "versions.json"]);
-  await gitOutput(["commit", "-m", `release: ${nextTag}`]);
+  await gitOutput(["commit", "-m", `Release: ${nextTag}`]);
   await gitOutput(["tag", nextTag]);
   await gitOutput(["push", "origin", "main"]);
   await gitOutput(["push", "origin", nextTag]);

@@ -5,9 +5,21 @@
 
 > ⚠️ **Early development** — This plugin is in active early development. Use at your own risk and **back up your vault before enabling it**.
 
-An [Obsidian](https://obsidian.md) plugin that syncs your vault across devices in real time using [Yjs](https://github.com/yjs/yjs) conflict-free replicated data types (CRDTs). Requires a self-hosted [obsidian-crdt-sync-server](https://github.com/yegor-usoltsev/obsidian-crdt-sync-server).
+An [Obsidian](https://obsidian.md) plugin for real-time, self-hosted vault sync. Write on one device, open another, and keep going with the same notes, folders, and attachments through your own [obsidian-crdt-sync-server](https://github.com/yegor-usoltsev/obsidian-crdt-sync-server).
 
 ![Demo](https://raw.githubusercontent.com/yegor-usoltsev/obsidian-crdt-sync/refs/heads/main/.github/demo.gif)
+
+## What you get
+
+- **Real-time sync for your whole vault**: notes update across devices quickly, so your vault feels continuous instead of manually shuffled around.
+- **Better handling of simultaneous edits**: text notes use collaborative merging, which is much more forgiving than plain file-based sync.
+- **Attachments included**: images, PDFs, audio, and other binary files can sync alongside Markdown notes.
+- **File and folder changes stay aligned**: creates, renames, moves, and deletes propagate across devices, not just file contents.
+- **Offline work still counts**: keep editing without a connection and let pending changes catch up when you reconnect.
+- **Safer conflict handling**: if the plugin cannot apply a change cleanly, it preserves local data as `.sync-conflict-<timestamp>` copies instead of silently overwriting it.
+- **Backups beyond sync**: the companion server can also export your synced vault into Git, giving you commit history and a recovery path outside the live sync database.
+- **A self-hosted stack**: the companion server stores your vault state on infrastructure you control, with durable SQLite storage.
+- **Practical recovery tools**: the plugin shows sync state in Obsidian and lets you trigger a full resync from the ribbon or command palette whenever you need to reconcile everything.
 
 ## Installation
 
@@ -29,15 +41,9 @@ Open **Settings → CRDT Sync** and fill in:
 
 After saving, the plugin connects automatically. Sync status is shown in the status bar (`Sync: ok`, `Sync: syncing`, `Sync: offline`, `Sync: error`). Use the ribbon icon or **Run full sync** command to force a full reconciliation.
 
-## How it works
+## In practice
 
-- **Content**: Each file is stored as a [Yjs](https://github.com/yjs/yjs) document on the server. Text files use collaborative `Y.Text` (character-level CRDT merging); binary files are stored as opaque byte snapshots — last write wins.
-- **Metadata**: File paths, renames, and deletes are managed via a server-authoritative ordered event log. The server validates every operation and is the single source of truth for file identity and naming.
-- **Transport**: Sync happens over WebSocket via [Hocuspocus](https://tiptap.dev/docs/hocuspocus/introduction). On connect the plugin performs a full reconciliation between local vault state and server state.
-- **Conflicts**: Local data is preserved as `.sync-conflict-<timestamp>` copies. Files are never silently overwritten or deleted.
-- **Offline**: Pending content changes are queued locally and flushed on reconnect.
-- **File size**: Files larger than 90 MB are skipped.
-- **Ignored paths**: `.obsidian/`, `.git/`, and OS/editor noise files are never synced.
+When a device connects, the plugin reconciles its local vault with the server and resumes syncing from there. Text notes are merged collaboratively, binary files are synced as attachments, local offline changes are replayed on reconnect, and files larger than 90 MB are skipped.
 
 ## Risks and security
 
@@ -57,7 +63,7 @@ bun run release patch
 # or: bun run release major
 ```
 
-The local release script updates `manifest.json` and `versions.json`, creates a `release: vX.Y.Z` commit, creates the matching Git tag, and pushes both `main` and the tag to GitHub.
+The local release script updates `manifest.json` and `versions.json`, creates a `Release: vX.Y.Z` commit, creates the matching Git tag, and pushes both `main` and the tag to GitHub.
 
 The GitHub Actions release workflow then runs [GoReleaser](https://goreleaser.com/) on that tag. GoReleaser installs dependencies, builds `main.js`, creates the GitHub release, and uploads `main.js`, `manifest.json`, and `versions.json` as release assets.
 
