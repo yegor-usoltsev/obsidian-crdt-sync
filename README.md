@@ -31,7 +31,7 @@ The plugin is not yet listed in the Obsidian Community Plugins directory. Instal
 
 ## Configuration
 
-Open **Settings → CRDT Sync** and fill in:
+Open **Settings → Real-Time CRDT Sync** and fill in:
 
 | Setting           | Description                                                                                            |
 | ----------------- | ------------------------------------------------------------------------------------------------------ |
