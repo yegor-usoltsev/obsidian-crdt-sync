@@ -25,8 +25,8 @@ An [Obsidian](https://obsidian.md) plugin for real-time, self-hosted vault sync.
 
 The plugin is not yet listed in the Obsidian Community Plugins directory. Install manually:
 
-1. Download `main.js`, `manifest.json`, and `versions.json` from the [latest release](https://github.com/yegor-usoltsev/obsidian-crdt-sync/releases).
-2. Copy them to `<vault>/.obsidian/plugins/crdt-sync/`.
+1. Download `main.js`, `manifest.json`, `styles.css`, and `versions.json` from the [latest release](https://github.com/yegor-usoltsev/obsidian-crdt-sync/releases).
+2. Copy them to your vault's config plugins folder (usually `<vault>/.obsidian/plugins/crdt-sync/`).
 3. Enable the plugin under **Settings → Community plugins**.
 
 ## Configuration
