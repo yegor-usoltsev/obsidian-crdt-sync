@@ -5,7 +5,7 @@
 
 > ⚠️ **Early development** — This plugin is in active early development. Use at your own risk and **back up your vault before enabling it**.
 
-An [Obsidian](https://obsidian.md) plugin for real-time, self-hosted vault sync. Write on one device, open another, and keep going with the same notes, folders, and attachments through your own [obsidian-crdt-sync-server](https://github.com/yegor-usoltsev/obsidian-crdt-sync-server).
+An [Obsidian](https://obsidian.md) plugin that syncs your vault in real time across devices through your own self-hosted [obsidian-crdt-sync-server](https://github.com/yegor-usoltsev/obsidian-crdt-sync-server). Supports notes, folders, and attachments with offline editing, conflict recovery, and optional Git backup.
 
 ![Demo](https://raw.githubusercontent.com/yegor-usoltsev/obsidian-crdt-sync/refs/heads/main/.github/demo.gif)
 
@@ -37,7 +37,7 @@ Open **Settings → Real-Time CRDT Sync** and fill in:
 | ----------------- | ------------------------------------------------------------------------------------------------------ |
 | **Server URL**    | WebSocket URL of your server, e.g. `wss://sync.example.com`. Use `ws://` for localhost only.           |
 | **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
-| **Debug logging** | Enable verbose console logs for troubleshooting                                                        |
+| **Debug logging** | Enable verbose console logs for troubleshooting.                                                       |
 
 After saving, the plugin connects automatically. Sync status is shown in the status bar (`CRDT Sync: connected`, `syncing`, `offline`, `error`). Hover the status bar item for details. Use the ribbon icon or **Run full sync** command to force a full reconciliation.
 
