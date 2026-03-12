@@ -233,7 +233,11 @@ export default class CrdtSyncPlugin extends Plugin {
           return;
         }
         if (
-          isIgnoredSyncPath(path, file instanceof TFile ? "file" : "directory")
+          isIgnoredSyncPath(
+            path,
+            file instanceof TFile ? "file" : "directory",
+            this.app.vault.configDir,
+          )
         ) {
           return;
         }
@@ -255,6 +259,7 @@ export default class CrdtSyncPlugin extends Plugin {
         this.syncState = updater(this.syncState);
         this.scheduleSyncStatePersist();
       },
+      getConfigDir: () => this.app.vault.configDir,
       readLocalFile: async (path, kind) => {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile) || file.stat.size > MAX_SYNC_FILE_BYTES) {

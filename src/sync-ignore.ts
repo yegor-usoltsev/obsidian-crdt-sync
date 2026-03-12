@@ -19,7 +19,6 @@ export const SYNC_IGNORE_LIST = `# Managed by obsidian-crdt-sync
 .git/
 .LSOverride
 .nfs*
-.obsidian/
 .Spotlight-V100
 .TemporaryItems
 .Trash-*
@@ -47,13 +46,33 @@ function normalizeVaultPath(path: string): string {
   return normalize(path).split("\\").join("/");
 }
 
+function normalizeConfigDir(configDir: string | undefined): string {
+  const normalized = normalizeVaultPath(configDir ?? ".obsidian");
+  return normalized.length > 0 ? normalized : ".obsidian";
+}
+
+function isConfigPath(
+  normalizedPath: string,
+  configDir: string,
+  kind: "file" | "directory",
+): boolean {
+  return (
+    normalizedPath === configDir ||
+    normalizedPath.startsWith(`${configDir}/`) ||
+    (kind === "directory" && normalizedPath === configDir.replace(/\/+$/, ""))
+  );
+}
+
 export function isIgnoredSyncPath(
   path: string,
   kind: "file" | "directory",
+  configDir?: string,
 ): boolean {
   const normalizedPath = normalizeVaultPath(path);
+  const normalizedConfigDir = normalizeConfigDir(configDir);
   return (
     normalizedPath === SYNC_IGNORE_RESERVED_PATH ||
+    isConfigPath(normalizedPath, normalizedConfigDir, kind) ||
     syncIgnore.ignores(normalizedPath) ||
     (kind === "directory" && syncIgnore.ignores(`${normalizedPath}/`))
   );

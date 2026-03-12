@@ -113,7 +113,14 @@ export class VaultWatcher {
   private async onCreate(file: TAbstractFile): Promise<void> {
     if (!this.enabled) return;
     if (!isVaultEntry(file)) return;
-    if (isIgnoredSyncPath(file.path, getVaultEntrySyncKind(file))) return;
+    if (
+      isIgnoredSyncPath(
+        file.path,
+        getVaultEntrySyncKind(file),
+        this.vault.configDir,
+      )
+    )
+      return;
     if (this.echoPrevention.isWriting(file.path)) return;
     this.echoPrevention.unmarkLocallyDeleted(file.path);
 
@@ -162,7 +169,13 @@ export class VaultWatcher {
     if (!isVaultEntry(file)) {
       return;
     }
-    if (isIgnoredSyncPath(file.path, getVaultEntrySyncKind(file))) {
+    if (
+      isIgnoredSyncPath(
+        file.path,
+        getVaultEntrySyncKind(file),
+        this.vault.configDir,
+      )
+    ) {
       return;
     }
     if (isVaultFile(file) && file.stat.size > MAX_SYNC_FILE_BYTES) {
@@ -187,7 +200,7 @@ export class VaultWatcher {
   private onModify(file: TAbstractFile): void {
     if (!this.enabled) return;
     if (!isVaultFile(file)) return;
-    if (isIgnoredSyncPath(file.path, "file")) return;
+    if (isIgnoredSyncPath(file.path, "file", this.vault.configDir)) return;
     if (this.echoPrevention.isWriting(file.path)) return;
 
     if (this.createDebouncers.has(file.path)) {
@@ -211,7 +224,7 @@ export class VaultWatcher {
   }
 
   private async applyModify(file: TFile): Promise<void> {
-    if (isIgnoredSyncPath(file.path, "file")) return;
+    if (isIgnoredSyncPath(file.path, "file", this.vault.configDir)) return;
     if (this.echoPrevention.isWriting(file.path)) return;
     if (file.stat.size > MAX_SYNC_FILE_BYTES) {
       return;
@@ -291,7 +304,14 @@ export class VaultWatcher {
       return;
     }
     const fileId = this.resolveFileId(file.path);
-    if (isIgnoredSyncPath(file.path, getVaultEntrySyncKind(file)) && !fileId) {
+    if (
+      isIgnoredSyncPath(
+        file.path,
+        getVaultEntrySyncKind(file),
+        this.vault.configDir,
+      ) &&
+      !fileId
+    ) {
       return;
     }
     if (!fileId) {
@@ -317,8 +337,16 @@ export class VaultWatcher {
     }
 
     const syncKind = getVaultEntrySyncKind(file);
-    const oldPathIgnored = isIgnoredSyncPath(oldPath, syncKind);
-    const newPathIgnored = isIgnoredSyncPath(file.path, syncKind);
+    const oldPathIgnored = isIgnoredSyncPath(
+      oldPath,
+      syncKind,
+      this.vault.configDir,
+    );
+    const newPathIgnored = isIgnoredSyncPath(
+      file.path,
+      syncKind,
+      this.vault.configDir,
+    );
     if (newPathIgnored) {
       if (this.cancelCreate(oldPath)) {
         return;

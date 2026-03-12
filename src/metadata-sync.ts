@@ -114,6 +114,7 @@ interface MetadataSyncConfiguration {
   clientId: string;
   getSyncState: () => SyncState;
   updateSyncState: (updater: (syncState: SyncState) => SyncState) => void;
+  getConfigDir?: () => string;
   readLocalFile: (
     path: string,
     kind: Exclude<FileKind, "directory">,
@@ -134,6 +135,7 @@ export class MetadataSync {
   private readonly updateSyncState: (
     updater: (syncState: SyncState) => SyncState,
   ) => void;
+  private readonly getConfigDir: (() => string) | undefined;
   private readonly readLocalFile: (
     path: string,
     kind: Exclude<FileKind, "directory">,
@@ -154,6 +156,7 @@ export class MetadataSync {
     this.clientId = configuration.clientId;
     this.getSyncState = configuration.getSyncState;
     this.updateSyncState = configuration.updateSyncState;
+    this.getConfigDir = configuration.getConfigDir;
     this.readLocalFile = configuration.readLocalFile;
     this.notify = configuration.notify;
     this.persistSyncStateNow = configuration.persistSyncStateNow;
@@ -189,7 +192,7 @@ export class MetadataSync {
     path: string,
     kind: Exclude<FileKind, "directory">,
   ): Promise<void> {
-    if (isIgnoredSyncPath(path, "file")) {
+    if (isIgnoredSyncPath(path, "file", this.getConfigDir?.())) {
       return;
     }
     this.rememberPath(fileId, path);
@@ -210,7 +213,7 @@ export class MetadataSync {
             return (
               typeof path === "string" &&
               path.length > 0 &&
-              !isIgnoredSyncPath(path, "file")
+              !isIgnoredSyncPath(path, "file", this.getConfigDir?.())
             );
           }),
         ),
@@ -418,6 +421,7 @@ export class MetadataSync {
           isIgnoredSyncPath(
             operation.path,
             getOperationSyncKind(operation.kind),
+            this.getConfigDir?.(),
           )
           ? operation.path
           : undefined;
@@ -426,6 +430,7 @@ export class MetadataSync {
           isIgnoredSyncPath(
             operation.newPath,
             getOperationSyncKind(operation.kind),
+            this.getConfigDir?.(),
           )
           ? operation.newPath
           : undefined;
