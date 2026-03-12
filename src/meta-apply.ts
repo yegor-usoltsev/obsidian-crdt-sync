@@ -139,9 +139,16 @@ export function createObsidianVaultFacade(app: App): SyncedVaultFacade {
       if (parent === "." || parent === "/") {
         return;
       }
-      try {
-        await vault.adapter.mkdir(parent);
-      } catch {}
+      let current = "";
+      for (const segment of parent.split("/").filter(Boolean)) {
+        current = current ? `${current}/${segment}` : segment;
+        if (vault.getAbstractFileByPath(current)) {
+          continue;
+        }
+        try {
+          await vault.createFolder(current);
+        } catch {}
+      }
     },
   };
 }

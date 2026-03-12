@@ -143,17 +143,17 @@ export class IncomingSync {
 
     this.echoPrevention.markWriting(path);
     try {
-        if (isVaultFile(existing)) {
-          if (actualKind === "text") {
-            const ytext = this.connection.filesMap.get(fileId);
-            if (!(ytext instanceof Y.Text)) {
-              return;
-            }
-            await this.vault.process(existing, () => ytext.toString());
-          } else {
-            const binary = getBinaryContent(this.connection.filesMap, fileId);
-            if (!binary) {
-              return;
+      if (isVaultFile(existing)) {
+        if (actualKind === "text") {
+          const ytext = this.connection.filesMap.get(fileId);
+          if (!(ytext instanceof Y.Text)) {
+            return;
+          }
+          await this.vault.process(existing, () => ytext.toString());
+        } else {
+          const binary = getBinaryContent(this.connection.filesMap, fileId);
+          if (!binary) {
+            return;
           }
           await this.vault.modifyBinary(existing, toArrayBuffer(binary));
         }
@@ -180,13 +180,20 @@ export class IncomingSync {
   private async ensureParentDir(path: string): Promise<void> {
     const dir = dirname(path);
     if (dir === "." || dir === "/") return;
-    try {
-      await this.vault.adapter.mkdir(dir);
-    } catch (error) {
-      this.logger.debug("ensureParentDir failed (may already exist)", {
-        dir,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    let current = "";
+    for (const segment of dir.split("/").filter(Boolean)) {
+      current = current ? `${current}/${segment}` : segment;
+      if (this.vault.getAbstractFileByPath(current)) {
+        continue;
+      }
+      try {
+        await this.vault.createFolder(current);
+      } catch (error) {
+        this.logger.debug("ensureParentDir failed (may already exist)", {
+          dir: current,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
