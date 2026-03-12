@@ -48,7 +48,7 @@ export class PluginLogger {
     message: string,
     context?: Record<string, unknown>,
   ): void {
-    if (!this.state.enabled && level !== "warn" && level !== "error") return;
+    if (!this.state.enabled && level !== "error") return;
     const mergedContext = Object.fromEntries(
       Object.entries({
         ...this.defaultContext,

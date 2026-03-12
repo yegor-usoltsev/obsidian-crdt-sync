@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PluginLogger } from "../src/logger";
 
 describe("PluginLogger", () => {
-  test("suppresses debug and info when disabled, but always emits warn and error", () => {
+  test("suppresses debug, info, and warn when disabled, but always emits error", () => {
     const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
@@ -33,8 +33,7 @@ describe("PluginLogger", () => {
     }
 
     expect(logs).toEqual([]);
-    expect(warns).toHaveLength(1);
-    expect(warns[0]).toContain("[crdt-sync] warn");
+    expect(warns).toEqual([]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("[crdt-sync] error");
   });
