@@ -143,17 +143,17 @@ export class IncomingSync {
 
     this.echoPrevention.markWriting(path);
     try {
-      if (isVaultFile(existing)) {
-        if (actualKind === "text") {
-          const ytext = this.connection.filesMap.get(fileId);
-          if (!(ytext instanceof Y.Text)) {
-            return;
-          }
-          await this.vault.modify(existing, ytext.toString());
-        } else {
-          const binary = getBinaryContent(this.connection.filesMap, fileId);
-          if (!binary) {
-            return;
+        if (isVaultFile(existing)) {
+          if (actualKind === "text") {
+            const ytext = this.connection.filesMap.get(fileId);
+            if (!(ytext instanceof Y.Text)) {
+              return;
+            }
+            await this.vault.process(existing, () => ytext.toString());
+          } else {
+            const binary = getBinaryContent(this.connection.filesMap, fileId);
+            if (!binary) {
+              return;
           }
           await this.vault.modifyBinary(existing, toArrayBuffer(binary));
         }

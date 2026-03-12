@@ -204,7 +204,7 @@ export default class CrdtSyncPlugin extends Plugin {
     );
 
     this.metadataMirror = new MetadataMirror({
-      vaultFacade: createObsidianVaultFacade(this.app.vault),
+      vaultFacade: createObsidianVaultFacade(this.app),
       connection: this.connection,
       echoPrevention: this.echoPrevention,
       localClientId: this.clientId,

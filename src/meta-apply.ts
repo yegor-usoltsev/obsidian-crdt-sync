@@ -1,4 +1,4 @@
-import type { Component, Vault } from "obsidian";
+import type { App, Component, Vault } from "obsidian";
 import { dirname, isAbsolute, normalize } from "pathe";
 import * as v from "valibot";
 import * as Y from "yjs";
@@ -77,7 +77,8 @@ const metadataEventSchema = v.object({
   contentFingerprint: optionalString,
 });
 
-export function createObsidianVaultFacade(vault: Vault): SyncedVaultFacade {
+export function createObsidianVaultFacade(app: App): SyncedVaultFacade {
+  const { vault, fileManager } = app;
   return {
     async kind(path) {
       const file = vault.getAbstractFileByPath(path);
@@ -113,7 +114,7 @@ export function createObsidianVaultFacade(vault: Vault): SyncedVaultFacade {
       }
 
       if (kind === "text") {
-        await vault.modify(file, content as string);
+        await vault.process(file, () => content as string);
         return;
       }
 
@@ -131,7 +132,7 @@ export function createObsidianVaultFacade(vault: Vault): SyncedVaultFacade {
       if (!file) {
         throw new Error(`Missing entry "${path}"`);
       }
-      await vault.delete(file);
+      await fileManager.trashFile(file);
     },
     async ensureParentDir(path) {
       const parent = dirname(path);
