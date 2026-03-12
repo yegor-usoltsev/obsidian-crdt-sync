@@ -16,13 +16,18 @@ builds:
     skip: true
 
 changelog:
-  disable: true
+  sort: asc
+  abbrev: -1
+  filters:
+    exclude:
+      - "^Release:"
+      - "^Merge "
 
 release:
   github:
     owner: yegor-usoltsev
     name: obsidian-crdt-sync
-  name_template: "v{{ .Version }}"
+  name_template: "{{ .Version }}"
   extra_files:
     - glob: ./main.js
     - glob: ./manifest.json

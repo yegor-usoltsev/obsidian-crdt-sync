@@ -63,7 +63,7 @@ bun run release patch
 # or: bun run release major
 ```
 
-The local release script updates `manifest.json` and `versions.json`, creates a `Release: vX.Y.Z` commit, creates the matching Git tag, and pushes both `main` and the tag to GitHub.
+The local release script updates `manifest.json` and `versions.json`, creates a `Release: X.Y.Z` commit, creates the matching `X.Y.Z` Git tag, and pushes both `main` and the tag to GitHub.
 
 The GitHub Actions release workflow then runs [GoReleaser](https://goreleaser.com/) on that tag. GoReleaser installs dependencies, builds `main.js`, creates the GitHub release, and uploads `main.js`, `manifest.json`, and `versions.json` as release assets.
 
@@ -75,7 +75,7 @@ goreleaser release --snapshot --clean
 
 ## Versioning
 
-This project uses [Semantic Versioning](https://semver.org). Release tags use the `vX.Y.Z` format, while the plugin manifest uses the plain `X.Y.Z` version string required by Obsidian.
+This project uses [Semantic Versioning](https://semver.org). Release tags use the same `X.Y.Z` version format as `manifest.json` and `versions.json`, as required by Obsidian community plugins.
 
 ## Contributing
 
