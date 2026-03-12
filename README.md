@@ -39,7 +39,7 @@ Open **Settings → Real-Time CRDT Sync** and fill in:
 | **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
 | **Debug logging** | Enable verbose console logs for troubleshooting.                                                       |
 
-After saving, the plugin connects automatically. Sync status is shown in the status bar (`CRDT Sync: connected`, `CRDT Sync: syncing`, `CRDT Sync: offline`, `CRDT Sync: error`). Hover the status bar item for details. Use the ribbon icon or **Run full sync** command to force a full reconciliation.
+After saving, the plugin connects automatically. The settings tab shows current connection state and gives you **Reconnect now** and **Run full sync** actions in one place. Sync status is also shown in the status bar (`CRDT Sync: connected`, `CRDT Sync: syncing`, `CRDT Sync: offline`, `CRDT Sync: error`). Hover the status item for details or click it to run a full sync.
 
 ## In practice
 

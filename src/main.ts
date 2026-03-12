@@ -76,7 +76,11 @@ export default class CrdtSyncPlugin extends Plugin {
 
   override async onload() {
     await this.loadSettings();
-    this.statusBar = new StatusBarManager(this.addStatusBarItem());
+    const statusBarEl = this.addStatusBarItem();
+    statusBarEl.classList.add("mod-clickable", "crdt-sync-status");
+    statusBarEl.tabIndex = 0;
+    statusBarEl.setAttribute("role", "button");
+    this.statusBar = new StatusBarManager(statusBarEl);
     this.addSettingTab(new CrdtSyncSettingTab(this.app, this));
     this.addRibbonIcon("refresh-cw", "Run full sync", () => {
       void this.runManualFullSync();
@@ -92,6 +96,17 @@ export default class CrdtSyncPlugin extends Plugin {
       if (document.visibilityState !== "visible") {
         this.offlineQueue?.flush();
       }
+    });
+    this.registerDomEvent(statusBarEl, "click", () => {
+      void this.runManualFullSync();
+    });
+    this.registerDomEvent(statusBarEl, "keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+
+      event.preventDefault();
+      void this.runManualFullSync();
     });
 
     this.initConnection();
@@ -342,15 +357,87 @@ export default class CrdtSyncPlugin extends Plugin {
     this.initConnection();
   }
 
-  private async runManualFullSync(): Promise<void> {
+  getConnectionSummary(): {
+    detail: string;
+    label: string;
+    tone: "synced" | "syncing" | "offline" | "error";
+    canReconnect: boolean;
+    canRunFullSync: boolean;
+  } {
+    const { serverUrl, authToken } = this.settings;
+    if (!serverUrl || !authToken) {
+      return {
+        label: "Setup incomplete",
+        detail: "Add your server URL and auth token to start syncing.",
+        tone: "offline",
+        canReconnect: false,
+        canRunFullSync: false,
+      };
+    }
+
+    const urlError = validateServerUrl(serverUrl);
+    if (urlError) {
+      return {
+        label: "Configuration error",
+        detail: urlError,
+        tone: "error",
+        canReconnect: false,
+        canRunFullSync: false,
+      };
+    }
+
+    const tokenError = validateAuthToken(authToken);
+    if (tokenError) {
+      return {
+        label: "Configuration error",
+        detail: tokenError,
+        tone: "error",
+        canReconnect: false,
+        canRunFullSync: false,
+      };
+    }
+
+    const snapshot = this.statusBar.getSnapshot();
     if (!this.connection || !this.initialSync) {
-      new Notice("CRDT Sync is not connected.");
+      return {
+        label: "Offline",
+        detail:
+          "Valid settings are saved, but the sync connection is not active.",
+        tone: "offline",
+        canReconnect: false,
+        canRunFullSync: false,
+      };
+    }
+
+    return {
+      label:
+        snapshot.tone === "synced"
+          ? "Connected"
+          : snapshot.tone === "syncing"
+            ? "Syncing"
+            : snapshot.tone === "error"
+              ? "Attention needed"
+              : "Offline",
+      detail: snapshot.detail,
+      tone: snapshot.tone,
+      canReconnect: this.connection.status === WebSocketStatus.Disconnected,
+      canRunFullSync: snapshot.tone !== "error",
+    };
+  }
+
+  reconnectNow(): void {
+    this.connection?.requestReconnect("manual");
+  }
+
+  async runManualFullSync(): Promise<void> {
+    if (!this.connection || !this.initialSync) {
+      new Notice("Real-Time CRDT Sync is not connected.");
       return;
     }
 
     this.connection.requestReconnect("manual");
     await this.initialSync.requestFullSync();
-    new Notice("CRDT Sync full sync finished.");
+    new Notice("Real-Time CRDT Sync full sync finished.");
   }
 
   private observeMetaFiles(): void {
