@@ -1,4 +1,4 @@
-import { type App, ButtonComponent, PluginSettingTab, Setting } from "obsidian";
+import { type App, PluginSettingTab, Setting } from "obsidian";
 import type CrdtSyncPlugin from "./main";
 
 export const MIN_AUTH_TOKEN_LENGTH = 32;
@@ -83,109 +83,39 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("crdt-sync-settings");
 
-    const heroEl = containerEl.createDiv({ cls: "crdt-sync-settings-hero" });
-    heroEl.createEl("h2", { text: "Real-Time CRDT Sync" });
-    heroEl.createEl("p", {
-      text: "Keep your notes, folders, and attachments aligned across devices through your own sync server.",
-    });
-
-    const statusCardEl = containerEl.createDiv({
-      cls: "crdt-sync-settings-card",
-    });
-    const statusHeaderEl = statusCardEl.createDiv({
-      cls: "crdt-sync-settings-card-header",
-    });
-    statusHeaderEl.createEl("span", {
-      text: "Connection status",
-      cls: "crdt-sync-settings-card-label",
-    });
-    const statusBadgeEl = statusHeaderEl.createEl("span", {
-      cls: "crdt-sync-status-badge",
-    });
-    const statusDetailEl = statusCardEl.createEl("p", {
-      cls: "crdt-sync-settings-card-detail",
-    });
-    statusCardEl.createEl("p", {
-      cls: "crdt-sync-settings-card-meta",
-      text: "Settings reconnect automatically after you save them.",
-    });
-
-    const actionsEl = statusCardEl.createDiv({
-      cls: "crdt-sync-settings-actions",
-    });
-    const reconnectButton = new ButtonComponent(actionsEl)
-      .setButtonText("Reconnect now")
-      .onClick(() => {
-        this.plugin.reconnectNow();
-        renderStatusCard();
-      });
-    const fullSyncButton = new ButtonComponent(actionsEl)
-      .setCta()
-      .setButtonText("Run full sync")
-      .onClick(async () => {
-        await this.plugin.runManualFullSync();
-        renderStatusCard();
-      });
-
-    const renderStatusCard = (): void => {
-      const summary = this.plugin.getConnectionSummary();
-      statusCardEl.dataset.crdtSyncTone = summary.tone;
-      statusBadgeEl.setText(summary.label);
-      statusDetailEl.setText(summary.detail);
-      reconnectButton.setDisabled(!summary.canReconnect);
-      fullSyncButton.setDisabled(!summary.canRunFullSync);
-    };
-
-    renderStatusCard();
-
-    const urlSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName("Server URL")
       .setDesc(
         "WebSocket URL of the sync server (e.g. wss://sync.example.com). " +
-          "Insecure ws:// is only allowed for localhost.",
+          "Use ws:// for localhost only.",
       )
       .addText((text) =>
         text
           .setPlaceholder("wss://sync.example.com")
           .setValue(this.plugin.settings.serverUrl)
           .onChange(async (value) => {
-            const error = validateServerUrl(value);
-            this.showFieldError(urlSetting, error);
             this.plugin.settings.serverUrl = value;
             await this.plugin.saveSettings();
-            renderStatusCard();
           }),
       );
-    this.showFieldError(
-      urlSetting,
-      validateServerUrl(this.plugin.settings.serverUrl),
-    );
 
-    const tokenSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName("Auth token")
       .setDesc(
-        "Static authentication token for the sync server (stored securely). " +
-          `Must be at least ${MIN_AUTH_TOKEN_LENGTH} characters.`,
+        "Shared secret matching AUTH_TOKEN on the server. " +
+          `Must be at least ${MIN_AUTH_TOKEN_LENGTH} characters. Stored securely.`,
       )
       .addText((text) => {
         text
           .setPlaceholder("Enter token")
           .setValue(this.plugin.settings.authToken)
           .onChange(async (value) => {
-            const error = validateAuthToken(value);
-            this.showFieldError(tokenSetting, error);
             this.plugin.settings.authToken = value;
             await this.plugin.saveSettings();
-            renderStatusCard();
           });
         text.inputEl.type = "password";
       });
-    this.showFieldError(
-      tokenSetting,
-      validateAuthToken(this.plugin.settings.authToken),
-    );
 
     new Setting(containerEl)
       .setName("Debug logging")
@@ -196,24 +126,26 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.debugLogging = value;
             await this.plugin.saveSettings(false);
-            renderStatusCard();
           }),
       );
-  }
 
-  private showFieldError(setting: Setting, error: string | null): void {
-    const existing = setting.settingEl.querySelector(".crdt-sync-field-error");
-    if (existing) {
-      existing.remove();
-    }
+    const fullSyncSetting = new Setting(containerEl)
+      .setName("Full sync")
+      .addButton((button) =>
+        button
+          .setCta()
+          .setButtonText("Run")
+          .onClick(async () => {
+            await this.plugin.runManualFullSync();
+            updateStatus();
+          }),
+      );
 
-    if (!error) {
-      return;
-    }
+    const updateStatus = (): void => {
+      const snapshot = this.plugin.statusBar.getSnapshot();
+      fullSyncSetting.setDesc(snapshot.detail);
+    };
 
-    const errorEl = setting.settingEl.createDiv({
-      cls: "crdt-sync-field-error",
-    });
-    errorEl.setText(error);
+    updateStatus();
   }
 }

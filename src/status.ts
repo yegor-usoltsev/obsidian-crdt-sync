@@ -9,18 +9,21 @@ export interface StatusSnapshot {
 export class StatusBarManager {
   private snapshot: StatusSnapshot = {
     text: "CRDT Sync: offline",
-    detail: "Not connected to the sync server",
+    detail: "Not connected to the sync server.",
     tone: "offline",
   };
 
   constructor(private readonly el: HTMLElement) {
+    el.addClass("mod-clickable", "crdt-sync-status");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
     this.setOffline();
   }
 
   setSynced(): void {
     this.setState(
       "CRDT Sync: connected",
-      "Vault is synced and up to date",
+      "Vault is synced and up to date.",
       "synced",
     );
   }
@@ -28,7 +31,7 @@ export class StatusBarManager {
   setSyncing(): void {
     this.setState(
       "CRDT Sync: syncing",
-      "Synchronizing vault changes",
+      "Synchronizing vault changes.",
       "syncing",
     );
   }
@@ -36,13 +39,13 @@ export class StatusBarManager {
   setOffline(): void {
     this.setState(
       "CRDT Sync: offline",
-      "Not connected to the sync server",
+      "Not connected to the sync server.",
       "offline",
     );
   }
 
   setError(msg: string): void {
-    this.setState("CRDT Sync: error", `Sync error - ${msg}`, "error");
+    this.setState("CRDT Sync: error", `Sync error: ${msg}.`, "error");
   }
 
   getSnapshot(): StatusSnapshot {
@@ -52,8 +55,8 @@ export class StatusBarManager {
   private setState(text: string, detail: string, tone: StatusTone): void {
     this.snapshot = { text, detail, tone };
     this.el.setText(text);
-    this.el.ariaLabel = `${detail}. Click to run a full sync.`;
-    this.el.setAttribute("title", `${detail}. Click to run a full sync.`);
+    this.el.ariaLabel = `${detail} Click to run a full sync.`;
+    this.el.setAttribute("title", `${detail} Click to run a full sync.`);
     this.el.dataset.crdtSyncTone = tone;
   }
 }

@@ -19,7 +19,7 @@ An [Obsidian](https://obsidian.md) plugin that syncs your vault in real time acr
 - **Safer conflict handling**: if the plugin cannot apply a change cleanly, it preserves local data as `.sync-conflict-<timestamp>` copies instead of silently overwriting it.
 - **Backups beyond sync**: the companion server can also export your synced vault into Git, giving you commit history and a recovery path outside the live sync database.
 - **A self-hosted stack**: the companion server stores your vault state on infrastructure you control, with durable SQLite storage.
-- **Practical recovery tools**: the plugin shows sync state in Obsidian and lets you trigger a full resync from the ribbon or command palette whenever you need to reconcile everything.
+- **Practical recovery tools**: the plugin shows sync state in Obsidian and lets you trigger a full resync from the command palette whenever you need to reconcile everything.
 
 ## Installation
 
@@ -39,7 +39,7 @@ Open **Settings → Real-Time CRDT Sync** and fill in:
 | **Auth Token**    | Shared secret matching `AUTH_TOKEN` on the server (min 32 chars). Stored in Obsidian's secure storage. |
 | **Debug logging** | Enable verbose console logs for troubleshooting.                                                       |
 
-After saving, the plugin connects automatically. The settings tab shows current connection state and gives you **Reconnect now** and **Run full sync** actions in one place. Sync status is also shown in the status bar (`CRDT Sync: connected`, `CRDT Sync: syncing`, `CRDT Sync: offline`, `CRDT Sync: error`). Hover the status item for details or click it to run a full sync.
+After saving, the plugin connects automatically. Sync status is shown in the status bar (`CRDT Sync: connected`, `CRDT Sync: syncing`, `CRDT Sync: offline`, `CRDT Sync: error`). Click the status bar item or use the command palette to run a full sync.
 
 ## In practice
 
