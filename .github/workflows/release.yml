@@ -19,7 +19,7 @@ jobs:
         with:
           bun-version-file: package.json
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           args: release --clean
         env:
