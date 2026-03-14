@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "group:all", ":reviewer(yegor-usoltsev)"],
+  "schedule": ["on the 10th day of the month"],
+  "packageRules": [
+    {
+      "matchDatasources": ["npm"],
+      "matchPackageNames": ["obsidian"],
+      "allowedVersions": "1.11.4"
+    }
+  ]
+}
