@@ -8,42 +8,38 @@ export interface StatusSnapshot {
 
 export class StatusBarManager {
   private snapshot: StatusSnapshot = {
-    text: "CRDT Sync: offline",
+    text: "Sync: offline",
     detail: "Not connected to the sync server.",
     tone: "offline",
   };
 
   constructor(private readonly el: HTMLElement) {
-    el.addClass("mod-clickable", "crdt-sync-status");
+    el.addClass("crdt-sync-status", "mod-clickable");
     this.setOffline();
   }
 
   setSynced(): void {
     this.setState(
-      "CRDT Sync: connected",
+      "Sync: connected",
       "Vault is synced and up to date.",
       "synced",
     );
   }
 
   setSyncing(): void {
-    this.setState(
-      "CRDT Sync: syncing",
-      "Synchronizing vault changes.",
-      "syncing",
-    );
+    this.setState("Sync: syncing", "Synchronizing vault changes.", "syncing");
   }
 
   setOffline(): void {
     this.setState(
-      "CRDT Sync: offline",
+      "Sync: offline",
       "Not connected to the sync server.",
       "offline",
     );
   }
 
   setError(msg: string): void {
-    this.setState("CRDT Sync: error", `Sync error: ${msg}.`, "error");
+    this.setState("Sync: error", `Sync error: ${msg}.`, "error");
   }
 
   getSnapshot(): StatusSnapshot {

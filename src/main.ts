@@ -353,13 +353,13 @@ export default class CrdtSyncPlugin extends Plugin {
 
   async runManualFullSync(): Promise<void> {
     if (!this.connection || !this.initialSync) {
-      new Notice("Real-Time CRDT Sync is not connected.");
+      new Notice("Sync is not connected.");
       return;
     }
 
     this.connection.requestReconnect("manual");
     await this.initialSync.requestFullSync();
-    new Notice("Real-Time CRDT Sync full sync finished.");
+    new Notice("Full sync finished.");
   }
 
   private observeMetaFiles(): void {
