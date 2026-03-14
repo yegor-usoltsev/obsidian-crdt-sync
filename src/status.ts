@@ -15,8 +15,6 @@ export class StatusBarManager {
 
   constructor(private readonly el: HTMLElement) {
     el.addClass("mod-clickable", "crdt-sync-status");
-    el.tabIndex = 0;
-    el.setAttribute("role", "button");
     this.setOffline();
   }
 
@@ -56,7 +54,7 @@ export class StatusBarManager {
     this.snapshot = { text, detail, tone };
     this.el.setText(text);
     this.el.ariaLabel = `${detail} Click to run a full sync.`;
-    this.el.setAttribute("title", `${detail} Click to run a full sync.`);
-    this.el.dataset.crdtSyncTone = tone;
+    this.el.dataset.tooltipPosition = "top";
+    this.el.dataset.tone = tone;
   }
 }
