@@ -17,7 +17,6 @@ builds:
 
 changelog:
   sort: asc
-  abbrev: -1
   filters:
     exclude:
       - "^Release:"
@@ -28,6 +27,12 @@ release:
     owner: yegor-usoltsev
     name: obsidian-crdt-sync
   name_template: "{{ .Version }}"
+  footer: |
+    ## Installation
+    The plugin is not yet listed in the Obsidian Community Plugins directory. Install manually:
+    1. Download `main.js`, `manifest.json`, `styles.css`, and `versions.json` from this page.
+    2. Copy them to your vault's config plugins folder (usually `<vault>/.obsidian/plugins/crdt-sync/`).
+    3. Enable the plugin under **Settings → Community plugins**.
   extra_files:
     - glob: ./main.js
     - glob: ./manifest.json
