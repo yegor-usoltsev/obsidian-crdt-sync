@@ -1,7 +1,7 @@
 {
   "id": "crdt-sync",
   "name": "Real-Time CRDT Sync",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "minAppVersion": "1.11.4",
   "description": "Sync your vault in real time across devices through your own self-hosted server. Supports notes, folders, and attachments with offline editing, conflict recovery, and optional Git backup.",
   "author": "Yegor Usoltsev",
