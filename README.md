@@ -11,15 +11,17 @@ An [Obsidian](https://obsidian.md) plugin that syncs your vault in real time acr
 
 ## What you get
 
-- **Real-time sync for your whole vault**: notes update across devices quickly, so your vault feels continuous instead of manually shuffled around.
-- **Better handling of simultaneous edits**: text notes use collaborative merging, which is much more forgiving than plain file-based sync.
-- **Attachments included**: images, PDFs, audio, and other binary files can sync alongside Markdown notes.
-- **File and folder changes stay aligned**: creates, renames, moves, and deletes propagate across devices, not just file contents.
-- **Offline work still counts**: keep editing without a connection and let pending changes catch up when you reconnect.
-- **Safer conflict handling**: if the plugin cannot apply a change cleanly, it preserves local data as `.sync-conflict-<timestamp>` copies instead of silently overwriting it.
-- **Backups beyond sync**: the companion server can also export your synced vault into Git, giving you commit history and a recovery path outside the live sync database.
-- **A self-hosted stack**: the companion server stores your vault state on infrastructure you control, with durable SQLite storage.
-- **Practical recovery tools**: the plugin shows sync state in Obsidian and lets you trigger a full resync from the command palette whenever you need to reconcile everything.
+- **Hybrid sync by file type**: text notes use CRDT (Yjs) for collaborative merging, binary files sync as verified blobs, and settings files use deterministic merge policies — each file type gets the right sync strategy.
+- **Selective settings sync**: supported `.obsidian` files (app settings, appearance, hotkeys, core/community plugin state, plugin packages, themes, snippets) sync with explicit per-file merge policies. Workspace state is excluded.
+- **Stable file identity**: files have identity independent of their path, so renames and moves don't break sync history or create duplicates.
+- **Server-authoritative metadata**: the server owns file identity, paths, kinds, and structural invariants. Clients submit intents and receive authoritative results.
+- **Offline durability**: local sync state persists in IndexedDB, surviving restarts. Offline edits are captured and replayed on reconnect.
+- **History and restore**: the server maintains append-only history. Restore creates a new canonical head rather than mutating history in place.
+- **Conflict preservation**: when local data can't be safely reconciled, it's preserved as `.sync-conflict-{timestamp}-{hostname}` artifacts — never silently discarded.
+- **Repair and diagnostics**: command-palette actions for full sync, rebootstrap, index rebuild, current-file restore, and diagnostics export (JSON to vault root).
+- **Overwrite safety guard**: the plugin re-stats local files before writing remote content, aborting if the file changed during the apply window.
+- **Git backup**: the companion server can export canonical vault state to a Git repository on a schedule, with worktree safety and redundant-backup skipping.
+- **Self-hosted**: your vault data stays on infrastructure you control, with durable SQLite storage and content-addressed binary blob reuse.
 
 ## Installation
 
@@ -41,9 +43,23 @@ Open **Settings → Real-Time CRDT Sync** and fill in:
 
 After saving, the plugin connects automatically. Sync status is shown in the status bar (`CRDT Sync: connected`, `CRDT Sync: syncing`, `CRDT Sync: offline`, `CRDT Sync: error`). Click the status bar item or use the command palette to run a full sync.
 
-## In practice
+## Architecture
 
-When a device connects, the plugin reconciles its local vault with the server and resumes syncing from there. Text notes are merged collaboratively, binary files are synced as attachments, local offline changes are replayed on reconnect, and files larger than 90 MB are skipped.
+The plugin uses a hybrid sync architecture:
+
+| File class | Sync strategy | Transport |
+| --- | --- | --- |
+| Text notes (`.md`, `.txt`, etc.) | CRDT/Yjs per-file documents | WebSocket (Hocuspocus) |
+| Binary files (images, PDFs, etc.) | Snapshot/blob with digest verification | HTTP upload/download |
+| Settings files (`.obsidian/*`) | Snapshot with per-file merge policies | HTTP upload/download |
+
+**Plugin modules**: control-surface, local-store (IndexedDB), policy-engine, metadata-client, text-sync, blob-sync, settings-sync, bootstrap-repair.
+
+**Server modules**: transport (auth/health/WebSocket), metadata-registry, history, text-doc-service, blob-store, settings-store, backup (Git).
+
+## Sync behavior
+
+When a device connects, it resolves canonical metadata first (file identities, paths, kinds), then binds text documents and materializes binary/settings content. Text edits use diff-based bridging between the filesystem and CRDT state. Vault events are debounced (350ms create settle, 300ms modify) with directory rename/delete child suppression. Retry backoff is per-path exponential (5s × 2^failures, 5min cap). Files exceeding 200 MB are skipped.
 
 ## Risks and security
 

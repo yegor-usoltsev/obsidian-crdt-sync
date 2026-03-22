@@ -2,10 +2,10 @@
   transition: color 0.14s ease-in-out 0s;
 }
 
-.crdt-sync-status[data-tone="offline"] {
+.crdt-sync-status[data-sync-status="offline"] {
   color: var(--text-warning);
 }
 
-.crdt-sync-status[data-tone="error"] {
+.crdt-sync-status[data-sync-status="error"] {
   color: var(--text-error);
 }
