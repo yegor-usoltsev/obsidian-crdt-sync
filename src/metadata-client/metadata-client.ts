@@ -16,8 +16,8 @@ import type {
 export interface MetadataClientDeps {
   /** Send an intent over the control channel. */
   sendIntent(intent: MetadataIntent): void;
-  /** Called when a commit is received from the server. */
-  onCommit(commit: MetadataCommit): void;
+  /** Called when a commit is received from the server. wasPending=true means self-originated. */
+  onCommit(commit: MetadataCommit, wasPending: boolean): void;
   /** Called when a reject is received from the server. */
   onReject(reject: MetadataReject): void;
   /** Called when epoch changes (requires rebootstrap). */
@@ -106,8 +106,9 @@ export class MetadataClient {
 
   /** Handle an authoritative commit from the server. */
   handleCommit(commit: MetadataCommit): void {
+    const wasPending = this.pendingIntents.has(commit.operationId);
     this.pendingIntents.delete(commit.operationId);
-    this.deps.onCommit(commit);
+    this.deps.onCommit(commit, wasPending);
   }
 
   /** Handle a rejection from the server. */

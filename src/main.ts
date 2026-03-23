@@ -8,19 +8,25 @@
 
 import {
   type App,
+  Modal,
   Notice,
   normalizePath,
   Platform,
   Plugin,
+  Setting,
   SuggestModal,
+  type TFile,
 } from "obsidian";
-import { BlobClient } from "./blob-sync/blob-client";
+import * as Y from "yjs";
+import { BlobClient, computeDigest } from "./blob-sync/blob-client";
 import { BootstrapManager } from "./bootstrap-repair/bootstrap";
 import { VaultWatcher } from "./bootstrap-repair/vault-watcher";
 import {
   CrdtSyncSettingTab,
   DEFAULT_SETTINGS,
   type SyncSettings,
+  validateAuthToken,
+  validateServerUrl,
 } from "./control-surface/settings-tab";
 import { StatusBarManager } from "./control-surface/status-bar";
 import {
@@ -36,15 +42,26 @@ import {
   createFilePolicyEngine,
   type FilePolicyEngine,
 } from "./policy-engine/file-policy";
+import { rescanConfigDirectory } from "./settings-sync/config-rescan";
+import { SettingsClient } from "./settings-sync/settings-client";
+import {
+  applyMergePolicy,
+  isAllowlistedSettingsFile,
+} from "./settings-sync/settings-policy";
 import { PluginLogger } from "./shared/logger";
-import type {
-  EpochState,
-  FileMetadata,
-  MetadataCommit,
-  MetadataReject,
-  SyncStatus,
+import {
+  conflictArtifactName,
+  type EpochState,
+  type MetadataCommit,
+  type MetadataReject,
+  type SyncStatus,
 } from "./shared/types";
+import { importTextViaDiff } from "./text-sync/diff-bridge";
 import { HocuspocusClient } from "./text-sync/hocuspocus-client";
+import {
+  safeWriteBinaryContent,
+  safeWriteTextContent,
+} from "./text-sync/overwrite-guard";
 import { TextDocManager } from "./text-sync/text-doc-manager";
 
 const AUTH_SECRET_NAME = "crdt-sync-auth-token";
@@ -62,8 +79,20 @@ export default class CrdtSyncPlugin extends Plugin {
   private textDocManager: TextDocManager | null = null;
   private hocuspocusClient: HocuspocusClient | null = null;
   private blobClient: BlobClient | null = null;
+  private settingsClient: SettingsClient | null = null;
   private bootstrapManager: BootstrapManager | null = null;
   private vaultWatcher: VaultWatcher | null = null;
+
+  // Commit processing queue for serialized materialization
+  private commitQueue: Promise<void> = Promise.resolve();
+
+  private enqueueCommit(fn: () => Promise<void>): void {
+    this.commitQueue = this.commitQueue.then(fn).catch((err) => {
+      this.logger.error("Commit materialization failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -89,6 +118,22 @@ export default class CrdtSyncPlugin extends Plugin {
     this.localStore = createLocalSyncStore(vaultId);
     await this.localStore.open();
 
+    // Vault identity binding
+    let vaultMismatch = false;
+    const storedVaultId = await this.localStore.getVaultId();
+    if (storedVaultId && storedVaultId !== vaultId) {
+      this.logger.warn(
+        "Vault identity mismatch — previous vault used this store",
+        {
+          stored: storedVaultId,
+          current: vaultId,
+        },
+      );
+      vaultMismatch = true;
+    } else if (!storedVaultId) {
+      await this.localStore.setVaultId(vaultId);
+    }
+
     // Ensure clientId
     let clientId = await this.localStore.getClientId();
     if (!clientId) {
@@ -103,7 +148,21 @@ export default class CrdtSyncPlugin extends Plugin {
     const authToken = this.loadAuthToken();
     const serverUrl = this.settings.serverUrl;
 
-    if (serverUrl && authToken) {
+    // Validate config before connecting
+    const serverUrlError = serverUrl ? validateServerUrl(serverUrl) : null;
+    const authTokenError = authToken ? validateAuthToken(authToken) : null;
+    if (serverUrlError) {
+      this.logger.warn("Invalid server URL, running offline", {
+        error: serverUrlError,
+      });
+    }
+    if (authTokenError) {
+      this.logger.warn("Invalid auth token, running offline", {
+        error: authTokenError,
+      });
+    }
+
+    if (serverUrl && authToken && !serverUrlError && !authTokenError) {
       // Convert ws(s) URL to http(s) for REST endpoints
       const httpBaseUrl = serverUrl
         .replace(/^wss:/, "https:")
@@ -143,7 +202,13 @@ export default class CrdtSyncPlugin extends Plugin {
       const finalClientId = clientId;
       this.metadataClient = new MetadataClient({
         sendIntent: (intent) => channel.send(intent),
-        onCommit: async (commit) => {
+        onCommit: async (commit, wasPending) => {
+          // Capture pre-commit state before putFile overwrites it.
+          // Needed for rename (old path) and content-update (old digest).
+          const previousFile = !wasPending
+            ? await store.getFile(commit.fileId)
+            : undefined;
+
           await store.putFile({
             fileId: commit.fileId,
             path: commit.path,
@@ -152,9 +217,20 @@ export default class CrdtSyncPlugin extends Plugin {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             contentAnchor: commit.contentAnchor,
+            contentDigest: commit.contentDigest,
+            contentSize: commit.contentSize,
           });
           await store.dequeuePending(commit.operationId);
           channel.setLastKnownRevision(commit.revision);
+
+          // Materialize remote commits
+          if (!wasPending) {
+            const prevPath = previousFile?.path;
+            const prevDigest = previousFile?.contentDigest;
+            this.enqueueCommit(() =>
+              this.materializeCommit(commit, prevPath, prevDigest),
+            );
+          }
         },
         onReject: async (reject) => {
           logger.warn("Intent rejected", {
@@ -183,6 +259,21 @@ export default class CrdtSyncPlugin extends Plugin {
       // Text doc manager
       this.textDocManager = new TextDocManager({ logger: this.logger });
 
+      // Restore offline text progress before connecting Hocuspocus
+      {
+        const offlineProgress = await store.getAllOfflineProgress();
+        for (const { fileId, data } of offlineProgress) {
+          const entry = this.textDocManager.getOrCreate(fileId);
+          Y.applyUpdate(entry.doc, data);
+          this.logger.debug("Restored offline text progress", { fileId });
+        }
+        if (offlineProgress.length > 0) {
+          this.logger.info("Restored offline text progress", {
+            count: offlineProgress.length,
+          });
+        }
+      }
+
       // Hocuspocus client (text doc sync)
       const docsWsUrl = serverUrl.replace(/\/$/, "");
       this.hocuspocusClient = new HocuspocusClient({
@@ -190,10 +281,62 @@ export default class CrdtSyncPlugin extends Plugin {
         authToken,
         logger: this.logger,
         docManager: this.textDocManager,
+        onSynced: (fileId) => {
+          // Clear offline progress after successful sync
+          this.localStore?.deleteOfflineProgress(fileId);
+        },
+        onRemoteTextUpdate: async (fileId, text) => {
+          // Look up file path from local store
+          const allFiles = await this.localStore?.getAllFiles();
+          const fileMeta = allFiles?.find(
+            (f) => f.fileId === fileId && !f.deleted,
+          );
+          if (!fileMeta) return;
+
+          const echo = this.vaultWatcher?.getEchoPrevention();
+          echo?.markWritten(fileMeta.path);
+          const existing = this.app.vault.getAbstractFileByPath(fileMeta.path);
+          if (existing && "extension" in existing) {
+            const written = await safeWriteTextContent(
+              { vault: this.app.vault },
+              existing as TFile,
+              (existing as TFile).stat.mtime,
+              text,
+            );
+            if (!written) {
+              // Overwrite guard failed — create conflict artifact
+              const artifactPath = conflictArtifactName(
+                fileMeta.path,
+                Date.now(),
+                "local",
+              );
+              try {
+                await this.app.vault.create(artifactPath, text);
+              } catch {
+                // ignore
+              }
+            }
+          } else if (!existing) {
+            await this.ensureParentDirs(fileMeta.path);
+            echo?.markWritten(fileMeta.path);
+            try {
+              await this.app.vault.create(fileMeta.path, text);
+            } catch {
+              // File may already exist
+            }
+          }
+        },
       });
 
       // Blob client
       this.blobClient = new BlobClient({
+        baseUrl: httpBaseUrl,
+        authToken,
+        logger: this.logger,
+      });
+
+      // Settings client
+      this.settingsClient = new SettingsClient({
         baseUrl: httpBaseUrl,
         authToken,
         logger: this.logger,
@@ -221,50 +364,184 @@ export default class CrdtSyncPlugin extends Plugin {
             ? { epoch: diag.epoch, revision: diag.revision }
             : { epoch: "", revision: 0 };
 
-          // Subscribe from revision 0 to get all file metadata
-          // The subscribe handler sends commits which populate the store
-          // via the MetadataClient's onCommit callback
+          // Subscribe from revision 0 to get all file metadata.
+          // Use replay-complete for deterministic end-of-replay signal.
+          const requestId = crypto.randomUUID();
+          const replayPromise = channel.awaitReplayComplete(requestId);
+          channel.sendRaw({
+            action: "metadata.subscribe",
+            sinceRevision: 0,
+            requestId,
+          });
+
+          await replayPromise;
+
           const files = await store.getAllFiles();
           return { files, epoch };
         },
         setStatus: (status) => this.setStatus(status),
-        confirmDestructive: async (message) => {
-          new Notice(message);
-          return true;
+        confirmDestructive: (message) => {
+          return new Promise<boolean>((resolve) => {
+            const modal = new ConfirmModal(this.app, message, resolve);
+            modal.open();
+          });
         },
       });
 
       // Vault watcher
       this.vaultWatcher = new VaultWatcher(this, {
         logger: this.logger,
-        onFileCreate: (path) => {
+        onFileCreate: (path, isDirectory) => {
           const normalized = normalizePath(path);
+          if (isDirectory) {
+            this.metadataClient?.create(normalized, "directory");
+            return;
+          }
           const eligibility = this.policyEngine?.checkEligibility(normalized);
           if (!eligibility?.eligible) return;
           this.metadataClient?.create(normalized, eligibility.kind);
         },
-        onFileModify: (path) => {
+        onFileModify: async (path) => {
           const normalized = normalizePath(path);
           this.logger.debug("File modified", { path: normalized });
+
+          // Resolve fileId from local store
+          const allFiles = await this.localStore?.getAllFiles();
+          const fileMeta = allFiles?.find(
+            (f) => f.path === normalized && !f.deleted,
+          );
+          if (!fileMeta) return;
+
+          // Settings transport precedence: allowlisted config files use settings client
+          const configDir = ".obsidian";
+          if (normalized.startsWith(`${configDir}/`) && this.settingsClient) {
+            const configRelativePath = normalized.slice(configDir.length + 1);
+            const policy = isAllowlistedSettingsFile(configRelativePath);
+            if (policy) {
+              const vaultFile =
+                this.app.vault.getAbstractFileByPath(normalized);
+              if (vaultFile && "extension" in vaultFile) {
+                const content = await this.app.vault.read(vaultFile as TFile);
+                const contentBytes = new TextEncoder().encode(content);
+                const digest = await computeDigest(contentBytes);
+                try {
+                  await this.settingsClient.upload(
+                    configRelativePath,
+                    content,
+                    digest,
+                  );
+                } catch (err) {
+                  this.logger.error("Settings upload failed", {
+                    path: normalized,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              }
+              return; // Skip generic text/binary handling
+            }
+          }
+
+          if (fileMeta.kind === "text") {
+            // Import current vault content into Y.Doc via diff bridge
+            const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
+            if (vaultFile && "extension" in vaultFile) {
+              const content = await this.app.vault.read(vaultFile as TFile);
+              const entry = this.textDocManager?.get(fileMeta.fileId);
+              if (entry) {
+                importTextViaDiff(entry.text, content);
+              } else {
+                this.textDocManager?.importText(fileMeta.fileId, content);
+              }
+
+              // Save offline progress if disconnected
+              if (this.controlChannel?.getState() !== "connected") {
+                const docEntry = this.textDocManager?.get(fileMeta.fileId);
+                if (docEntry) {
+                  const update = Y.encodeStateAsUpdate(docEntry.doc);
+                  await this.localStore?.saveOfflineProgress(
+                    fileMeta.fileId,
+                    update,
+                  );
+                }
+              }
+            }
+          } else if (fileMeta.kind === "binary" && this.blobClient) {
+            // Upload binary content
+            const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
+            if (vaultFile && "extension" in vaultFile) {
+              const content = await this.app.vault.readBinary(
+                vaultFile as TFile,
+              );
+              const digest = await computeDigest(content);
+              try {
+                await this.blobClient.upload(fileMeta.fileId, content, digest);
+              } catch (err) {
+                this.logger.error("Blob upload failed", {
+                  path: normalized,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+          }
         },
-        onFileDelete: (path) => {
+        onFileDelete: async (path) => {
           const normalized = normalizePath(path);
           this.logger.debug("File deleted", { path: normalized });
+
+          // Resolve fileId and submit delete intent
+          const allFiles = await this.localStore?.getAllFiles();
+          const fileMeta = allFiles?.find(
+            (f) => f.path === normalized && !f.deleted,
+          );
+          if (!fileMeta) return;
+
+          this.metadataClient?.delete(
+            fileMeta.fileId,
+            fileMeta.contentAnchor,
+            fileMeta.contentDigest,
+          );
         },
-        onFileRename: (oldPath, newPath) => {
+        onFileRename: async (oldPath, newPath) => {
           const normalizedNew = normalizePath(newPath);
           this.logger.debug("File renamed", {
             oldPath,
             newPath: normalizedNew,
           });
+
+          // Resolve fileId by old path and submit rename intent
+          const allFiles = await this.localStore?.getAllFiles();
+          const fileMeta = allFiles?.find(
+            (f) => f.path === oldPath && !f.deleted,
+          );
+          if (!fileMeta) return;
+
+          this.metadataClient?.rename(
+            fileMeta.fileId,
+            normalizedNew,
+            fileMeta.contentAnchor,
+          );
         },
       });
 
       // Start connection, run initial bootstrap, then start vault watcher
       this.controlChannel.connect();
-      this.bootstrapManager
-        .bootstrap()
-        .then(() => {
+
+      // Vault identity mismatch forces a clean rebootstrap
+      if (vaultMismatch) {
+        await this.localStore.setVaultId(vaultId);
+      }
+
+      const bootstrapFn = vaultMismatch
+        ? () =>
+            this.bootstrapManager!.rebootstrap({
+              epoch: "vault-identity-mismatch",
+              revision: 0,
+            })
+        : () => this.bootstrapManager!.bootstrap();
+
+      bootstrapFn()
+        .then(async () => {
+          await this.reconcileSettings();
           this.vaultWatcher?.start();
         })
         .catch((err) => {
@@ -320,6 +597,7 @@ export default class CrdtSyncPlugin extends Plugin {
   override async onunload(): Promise<void> {
     // Tear down in reverse order
     this.vaultWatcher?.stop();
+    this.vaultWatcher?.getEchoPrevention().clear();
     this.hocuspocusClient?.disconnectAll();
     this.controlChannel?.disconnect();
     this.textDocManager?.destroyAll();
@@ -372,9 +650,10 @@ export default class CrdtSyncPlugin extends Plugin {
     this.setStatus("syncing");
 
     try {
-      // Connect if not already connected
+      // Connect and wait for connected state before sending messages
       if (this.controlChannel.getState() !== "connected") {
         this.controlChannel.connect();
+        await this.controlChannel.waitForConnected();
       }
 
       // Re-subscribe from last known revision to catch up on metadata
@@ -388,17 +667,38 @@ export default class CrdtSyncPlugin extends Plugin {
         this.controlChannel.send(intent);
       }
 
-      // Sync text docs for connected files
+      // Sync content for tracked files
       const files = await this.localStore?.getAllFiles();
-      if (files && this.hocuspocusClient) {
+      if (files) {
         for (const file of files) {
-          if (!file.deleted && file.kind === "text") {
+          if (file.deleted) continue;
+
+          if (file.kind === "text" && this.hocuspocusClient) {
             if (!this.hocuspocusClient.isConnected(file.fileId)) {
               this.hocuspocusClient.connect(file.fileId);
+            }
+          } else if (file.kind === "binary" && this.blobClient) {
+            // Download blobs that exist on server but not locally
+            const vaultFile = this.app.vault.getAbstractFileByPath(file.path);
+            if (!vaultFile) {
+              try {
+                const content = await this.blobClient.download(file.fileId);
+                const echo = this.vaultWatcher?.getEchoPrevention();
+                echo?.markWritten(file.path);
+                await this.app.vault.createBinary(file.path, content);
+              } catch (err) {
+                this.logger.error("Blob download failed during sync", {
+                  fileId: file.fileId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
             }
           }
         }
       }
+
+      // Reconcile settings files
+      await this.reconcileSettings();
 
       this.setStatus("synced");
       new Notice("Full sync complete");
@@ -595,6 +895,402 @@ export default class CrdtSyncPlugin extends Plugin {
     }
   }
 
+  /** Ensure all parent directories exist for a file path. */
+  private async ensureParentDirs(path: string): Promise<void> {
+    const segments = path.split("/");
+    for (let i = 1; i < segments.length; i++) {
+      const dirPath = segments.slice(0, i).join("/");
+      if (!this.app.vault.getAbstractFileByPath(dirPath)) {
+        try {
+          await this.app.vault.createFolder(dirPath);
+        } catch {
+          // Folder may already exist
+        }
+      }
+    }
+  }
+
+  /** Materialize a remote commit into the vault. */
+  private async materializeCommit(
+    commit: MetadataCommit,
+    previousPath?: string,
+    previousDigest?: string,
+  ): Promise<void> {
+    const echo = this.vaultWatcher?.getEchoPrevention();
+    const vault = this.app.vault;
+
+    // Settings transport precedence: allowlisted config files use settings client
+    const configDir = ".obsidian";
+    if (commit.path.startsWith(`${configDir}/`) && this.settingsClient) {
+      const configRelativePath = commit.path.slice(configDir.length + 1);
+      const policy = isAllowlistedSettingsFile(configRelativePath);
+      if (policy) {
+        try {
+          const serverResult =
+            await this.settingsClient.download(configRelativePath);
+          if (!serverResult) return;
+
+          let mergedContent = serverResult.content;
+          const existingFile = vault.getAbstractFileByPath(commit.path);
+          if (existingFile && "extension" in existingFile) {
+            const localContent = await vault.read(existingFile as TFile);
+            try {
+              const localJson = JSON.parse(localContent);
+              const remoteJson = JSON.parse(serverResult.content);
+              mergedContent = JSON.stringify(
+                applyMergePolicy(policy.policy, localJson, remoteJson),
+                null,
+                2,
+              );
+            } catch {
+              mergedContent = serverResult.content;
+            }
+          }
+
+          await this.ensureParentDirs(commit.path);
+          echo?.markWritten(commit.path);
+          if (existingFile && "extension" in existingFile) {
+            await vault.process(existingFile as TFile, () => mergedContent);
+          } else {
+            await vault.create(commit.path, mergedContent);
+          }
+        } catch (err) {
+          this.logger.error("Settings materialization failed", {
+            path: commit.path,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+    }
+
+    switch (commit.operationType) {
+      case "create": {
+        if (commit.kind === "directory") {
+          echo?.markWritten(commit.path);
+          try {
+            await vault.createFolder(normalizePath(commit.path));
+          } catch {
+            // Folder may already exist
+          }
+          return;
+        }
+
+        if (commit.kind === "text") {
+          // Connect Hocuspocus, wait for sync, extract text
+          if (this.hocuspocusClient && this.textDocManager) {
+            try {
+              const entry = this.textDocManager.getOrCreate(commit.fileId);
+              if (!this.hocuspocusClient.isConnected(commit.fileId)) {
+                this.hocuspocusClient.connect(commit.fileId);
+              }
+
+              // Wait for sync
+              if (!entry.synced) {
+                await new Promise<void>((resolve, reject) => {
+                  const timeout = setTimeout(
+                    () => reject(new Error("Sync timeout")),
+                    30_000,
+                  );
+                  const checkSync = () => {
+                    if (entry.synced) {
+                      clearTimeout(timeout);
+                      resolve();
+                    } else {
+                      setTimeout(checkSync, 100);
+                    }
+                  };
+                  checkSync();
+                });
+              }
+
+              const text = entry.text.toString();
+              await this.ensureParentDirs(commit.path);
+              echo?.markWritten(commit.path);
+              await vault.create(commit.path, text);
+            } catch (err) {
+              this.logger.error("Text create materialization failed", {
+                path: commit.path,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+          return;
+        }
+
+        if (commit.kind === "binary" && this.blobClient) {
+          try {
+            const content = await this.blobClient.download(commit.fileId);
+            await this.ensureParentDirs(commit.path);
+            echo?.markWritten(commit.path);
+            await vault.createBinary(commit.path, content);
+          } catch (err) {
+            this.logger.error("Binary create materialization failed", {
+              path: commit.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+        break;
+      }
+
+      case "rename":
+      case "move": {
+        // Use pre-commit path captured before store.putFile()
+        const oldPath = previousPath;
+        if (oldPath && oldPath !== commit.path) {
+          const existing = vault.getAbstractFileByPath(oldPath);
+          if (existing) {
+            try {
+              await this.ensureParentDirs(commit.path);
+              echo?.markWritten(oldPath);
+              echo?.markWritten(commit.path);
+              await vault.rename(existing, commit.path);
+            } catch (err) {
+              this.logger.error("Rename materialization failed", {
+                oldPath,
+                newPath: commit.path,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+        break;
+      }
+
+      case "delete": {
+        const file = vault.getAbstractFileByPath(commit.path);
+        if (file) {
+          try {
+            echo?.markWritten(commit.path);
+            await vault.delete(file);
+          } catch (err) {
+            this.logger.error("Delete materialization failed", {
+              path: commit.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        break;
+      }
+
+      case "content-update": {
+        // Text content-updates are no-ops — text flows through Y.Doc sync
+        if (commit.kind === "text") return;
+
+        if (commit.kind === "binary" && this.blobClient) {
+          // Compare pre-commit digest to avoid re-downloading self-originated updates
+          if (previousDigest === commit.contentDigest) return;
+
+          const existing = vault.getAbstractFileByPath(commit.path);
+          if (existing && "extension" in existing) {
+            try {
+              const content = await this.blobClient.download(commit.fileId);
+              echo?.markWritten(commit.path);
+              await vault.modifyBinary(existing as TFile, content);
+            } catch (err) {
+              this.logger.error("Binary content-update failed", {
+                path: commit.path,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+          return;
+        }
+        break;
+      }
+
+      case "restore": {
+        if (
+          commit.kind === "text" &&
+          this.hocuspocusClient &&
+          this.textDocManager
+        ) {
+          // Connect and sync — server Y.Doc has restored content
+          try {
+            const entry = this.textDocManager.getOrCreate(commit.fileId);
+            if (!this.hocuspocusClient.isConnected(commit.fileId)) {
+              this.hocuspocusClient.connect(commit.fileId);
+            }
+
+            if (!entry.synced) {
+              await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(
+                  () => reject(new Error("Sync timeout")),
+                  30_000,
+                );
+                const checkSync = () => {
+                  if (entry.synced) {
+                    clearTimeout(timeout);
+                    resolve();
+                  } else {
+                    setTimeout(checkSync, 100);
+                  }
+                };
+                checkSync();
+              });
+            }
+
+            const text = entry.text.toString();
+            await this.ensureParentDirs(commit.path);
+            echo?.markWritten(commit.path);
+            const existingFile = vault.getAbstractFileByPath(commit.path);
+            if (existingFile && "extension" in existingFile) {
+              await vault.process(existingFile as TFile, () => text);
+            } else {
+              await vault.create(commit.path, text);
+            }
+          } catch (err) {
+            this.logger.error("Text restore materialization failed", {
+              path: commit.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+
+        if (commit.kind === "binary" && this.blobClient) {
+          try {
+            const content = await this.blobClient.download(commit.fileId);
+            await this.ensureParentDirs(commit.path);
+            echo?.markWritten(commit.path);
+            const existing = vault.getAbstractFileByPath(commit.path);
+            if (existing && "extension" in existing) {
+              await vault.modifyBinary(existing as TFile, content);
+            } else {
+              await vault.createBinary(commit.path, content);
+            }
+          } catch (err) {
+            this.logger.error("Binary restore materialization failed", {
+              path: commit.path,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+        break;
+      }
+    }
+  }
+
+  /** Reconcile allowlisted settings files with the server. */
+  private async reconcileSettings(): Promise<void> {
+    if (!this.settingsClient || !this.localStore) return;
+
+    try {
+      const { files } = rescanConfigDirectory(this.app.vault);
+      for (const { file, configRelativePath, policy } of files) {
+        try {
+          const serverResult =
+            await this.settingsClient.download(configRelativePath);
+          if (!serverResult) {
+            // Server doesn't have it — upload local
+            const content = await this.app.vault.read(file);
+            const contentBytes = new TextEncoder().encode(content);
+            const digest = await computeDigest(contentBytes);
+            await this.settingsClient.upload(
+              configRelativePath,
+              content,
+              digest,
+            );
+            continue;
+          }
+
+          // Compare anchors and digests to determine direction
+          const localContent = await this.app.vault.read(file);
+          const localBytes = new TextEncoder().encode(localContent);
+          const localDigest = await computeDigest(localBytes);
+
+          if (localDigest === serverResult.digest) continue; // In sync
+
+          // Look up locally tracked anchor for this settings file
+          const allFiles = await this.localStore!.getAllFiles();
+          const tracked = allFiles.find(
+            (f) => f.path === file.path && !f.deleted,
+          );
+          const localAnchor = tracked?.contentAnchor ?? 0;
+          const serverAnchor = serverResult.contentAnchor ?? 0;
+
+          if (serverAnchor > localAnchor) {
+            // Server is newer — download, merge, and write locally
+            let mergedContent = serverResult.content;
+            try {
+              const localJson = JSON.parse(localContent);
+              const remoteJson = JSON.parse(serverResult.content);
+              mergedContent = JSON.stringify(
+                applyMergePolicy(policy.policy, localJson, remoteJson),
+                null,
+                2,
+              );
+            } catch {
+              mergedContent = serverResult.content;
+            }
+
+            const echo = this.vaultWatcher?.getEchoPrevention();
+            echo?.markWritten(file.path);
+            await this.app.vault.process(file, () => mergedContent);
+
+            // Upload the merged result if different from server
+            const mergedBytes = new TextEncoder().encode(mergedContent);
+            const mergedDigest = await computeDigest(mergedBytes);
+            if (mergedDigest !== serverResult.digest) {
+              await this.settingsClient.upload(
+                configRelativePath,
+                mergedContent,
+                mergedDigest,
+              );
+            }
+          } else if (localAnchor > serverAnchor) {
+            // Local is newer — upload local content
+            await this.settingsClient.upload(
+              configRelativePath,
+              localContent,
+              localDigest,
+            );
+          } else {
+            // Same anchor but different digests — merge both directions
+            let mergedContent = serverResult.content;
+            try {
+              const localJson = JSON.parse(localContent);
+              const remoteJson = JSON.parse(serverResult.content);
+              mergedContent = JSON.stringify(
+                applyMergePolicy(policy.policy, localJson, remoteJson),
+                null,
+                2,
+              );
+            } catch {
+              mergedContent = serverResult.content;
+            }
+
+            const echo = this.vaultWatcher?.getEchoPrevention();
+            echo?.markWritten(file.path);
+            await this.app.vault.process(file, () => mergedContent);
+
+            const mergedBytes = new TextEncoder().encode(mergedContent);
+            const mergedDigest = await computeDigest(mergedBytes);
+            if (mergedDigest !== serverResult.digest) {
+              await this.settingsClient.upload(
+                configRelativePath,
+                mergedContent,
+                mergedDigest,
+              );
+            }
+          }
+        } catch (err) {
+          this.logger.error("Settings reconciliation failed for file", {
+            path: file.path,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.error("Settings reconciliation failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   setStatus(status: SyncStatus): void {
     this.statusBar?.update(status);
   }
@@ -607,6 +1303,51 @@ interface HistoryVersionEntry {
   timestamp: number;
   revision: number;
   contentDigest: string | null;
+}
+
+class ConfirmModal extends Modal {
+  private message: string;
+  private resolve: (confirmed: boolean) => void;
+  private resolved = false;
+
+  constructor(
+    app: App,
+    message: string,
+    resolve: (confirmed: boolean) => void,
+  ) {
+    super(app);
+    this.message = message;
+    this.resolve = resolve;
+  }
+
+  override onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("p", { text: this.message });
+    new Setting(contentEl)
+      .addButton((btn) =>
+        btn
+          .setButtonText("Continue")
+          .setWarning()
+          .onClick(() => {
+            this.resolved = true;
+            this.resolve(true);
+            this.close();
+          }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Cancel").onClick(() => {
+          this.resolved = true;
+          this.resolve(false);
+          this.close();
+        }),
+      );
+  }
+
+  override onClose(): void {
+    if (!this.resolved) {
+      this.resolve(false);
+    }
+  }
 }
 
 class HistoryVersionModal extends SuggestModal<HistoryVersionEntry> {

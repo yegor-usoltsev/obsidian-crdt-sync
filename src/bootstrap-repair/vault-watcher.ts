@@ -14,7 +14,7 @@ import { EchoPrevention } from "./echo-prevention";
 
 export interface VaultWatcherDeps {
   logger: PluginLogger;
-  onFileCreate(path: string): void;
+  onFileCreate(path: string, isDirectory?: boolean): void;
   onFileModify(path: string): void;
   onFileDelete(path: string): void;
   onFileRename(oldPath: string, newPath: string): void;
@@ -107,6 +107,9 @@ export class VaultWatcher {
     const path = file.path;
     if (this.echo.consumeWrite(path)) return;
 
+    // Detect directories via "children" property (TFolder)
+    const isDirectory = "children" in file;
+
     // Settle: wait for creation to stabilize
     const existing = this.createTimers.get(path);
     if (existing) clearTimeout(existing);
@@ -115,7 +118,7 @@ export class VaultWatcher {
       path,
       setTimeout(() => {
         this.createTimers.delete(path);
-        this.deps.onFileCreate(path);
+        this.deps.onFileCreate(path, isDirectory);
       }, DEBOUNCE.createSettle),
     );
   };

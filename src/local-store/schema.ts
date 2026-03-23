@@ -9,7 +9,6 @@
  *   - cursors: sync cursors per document/channel
  *   - offline: offline text progress (fileId → encoded updates)
  *   - blobs: blob metadata cache (fileId → digest, size)
- *   - diagnostics: repair and debug metadata
  */
 
 const DB_VERSION = 1;
@@ -20,7 +19,6 @@ const STORE_NAMES = [
   "cursors",
   "offline",
   "blobs",
-  "diagnostics",
 ] as const;
 
 export type StoreName = (typeof STORE_NAMES)[number];

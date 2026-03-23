@@ -107,8 +107,12 @@ export class BlobClient {
 }
 
 /** Compute SHA-256 digest of content. */
-export async function computeDigest(content: ArrayBuffer): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", content);
+export async function computeDigest(
+  content: ArrayBuffer | Uint8Array,
+): Promise<string> {
+  const buf =
+    content instanceof Uint8Array ? (content.buffer as ArrayBuffer) : content;
+  const hash = await crypto.subtle.digest("SHA-256", buf);
   const bytes = new Uint8Array(hash);
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))

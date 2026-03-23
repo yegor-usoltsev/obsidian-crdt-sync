@@ -45,10 +45,6 @@ export interface LocalSyncStore {
   deleteOfflineProgress(fileId: string): Promise<void>;
   getAllOfflineProgress(): Promise<{ fileId: string; data: Uint8Array }[]>;
   clearOfflineProgress(): Promise<void>;
-
-  // Diagnostics
-  setDiagnostic(key: string, value: unknown): Promise<void>;
-  getDiagnostic<T>(key: string): Promise<T | undefined>;
 }
 
 export function createLocalSyncStore(vaultId: string): LocalSyncStore {
@@ -108,10 +104,5 @@ export function createLocalSyncStore(vaultId: string): LocalSyncStore {
       return entries.map((e) => ({ fileId: e.key, data: e.value }));
     },
     clearOfflineProgress: () => storeClear(requireDb(), "offline"),
-
-    // Diagnostics
-    setDiagnostic: (key, value) =>
-      storePut(requireDb(), "diagnostics", key, value),
-    getDiagnostic: (key) => storeGet(requireDb(), "diagnostics", key),
   };
 }

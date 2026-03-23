@@ -1,10 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { PluginLogger } from "../../src/shared/logger";
-import {
-  importTextViaDiff,
-  isContentChanged,
-} from "../../src/text-sync/diff-bridge";
+import { importTextViaDiff } from "../../src/text-sync/diff-bridge";
 import { TextDocManager } from "../../src/text-sync/text-doc-manager";
 
 const logger = new PluginLogger("test", false);
@@ -142,16 +139,6 @@ describe("text-sync", () => {
 
       doc1.destroy();
       doc2.destroy();
-    });
-  });
-
-  describe("isContentChanged", () => {
-    it("returns false for same content", () => {
-      expect(isContentChanged("abc", "abc")).toBe(false);
-    });
-
-    it("returns true for different content", () => {
-      expect(isContentChanged("abc", "def")).toBe(true);
     });
   });
 });

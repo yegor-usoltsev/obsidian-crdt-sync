@@ -67,6 +67,35 @@ export class ControlChannel {
     this.doConnect();
   }
 
+  /**
+   * Wait for the channel to reach "connected" state.
+   * Resolves immediately if already connected.
+   * Rejects after timeoutMs or if the channel is intentionally closed.
+   */
+  waitForConnected(timeoutMs = 15000): Promise<void> {
+    if (this.state === "connected") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const originalOnState = this.config.callbacks.onStateChange;
+      const timer = setTimeout(() => {
+        this.config.callbacks.onStateChange = originalOnState;
+        reject(new Error("Timed out waiting for control channel connection"));
+      }, timeoutMs);
+
+      this.config.callbacks.onStateChange = (state) => {
+        originalOnState(state);
+        if (state === "connected") {
+          clearTimeout(timer);
+          this.config.callbacks.onStateChange = originalOnState;
+          resolve();
+        } else if (state === "disconnected" && this.intentionalClose) {
+          clearTimeout(timer);
+          this.config.callbacks.onStateChange = originalOnState;
+          reject(new Error("Control channel closed"));
+        }
+      };
+    });
+  }
+
   disconnect(): void {
     this.intentionalClose = true;
     this.clearReconnectTimer();
@@ -105,6 +134,7 @@ export class ControlChannel {
 
   /**
    * Send a request and wait for a response with the matching action.
+   * Uses a unique request ID to correlate concurrent requests.
    * Times out after the specified duration (default 10s).
    */
   requestResponse(
@@ -118,18 +148,46 @@ export class ControlChannel {
         return;
       }
 
+      const requestId = crypto.randomUUID();
+      const key = `${responseAction}:${requestId}`;
+
       const timeout = setTimeout(() => {
-        this.pendingRequests.delete(responseAction);
+        this.pendingRequests.delete(key);
         reject(new Error(`Timeout waiting for ${responseAction}`));
       }, timeoutMs);
 
-      this.pendingRequests.set(responseAction, (payload: unknown) => {
+      this.pendingRequests.set(key, (payload: unknown) => {
         clearTimeout(timeout);
-        this.pendingRequests.delete(responseAction);
+        this.pendingRequests.delete(key);
         resolve(payload);
       });
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify({ ...message, requestId }));
+    });
+  }
+
+  /**
+   * Wait for a metadata.replay-complete message with the given requestId.
+   * Separate from requestResponse because subscribe triggers a stream of
+   * commits before the final replay-complete.
+   */
+  awaitReplayComplete(
+    requestId: string,
+    timeoutMs = 30_000,
+  ): Promise<{ sinceRevision: number; currentRevision: number }> {
+    return new Promise((resolve, reject) => {
+      const key = `metadata.replay-complete:${requestId}`;
+
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(key);
+        reject(new Error("Timeout waiting for metadata.replay-complete"));
+      }, timeoutMs);
+
+      this.pendingRequests.set(key, (payload: unknown) => {
+        clearTimeout(timeout);
+        this.pendingRequests.delete(key);
+        resolve(payload as { sinceRevision: number; currentRevision: number });
+      });
     });
   }
 
@@ -195,12 +253,20 @@ export class ControlChannel {
     action: string;
     payload?: unknown;
     message?: string;
+    requestId?: string;
+    sinceRevision?: number;
+    currentRevision?: number;
   }): void {
-    // Check for pending request/response handlers first
-    const pendingHandler = this.pendingRequests.get(msg.action);
-    if (pendingHandler) {
-      pendingHandler(msg.payload);
-      return;
+    // Check for pending request/response handlers (exact key match only).
+    if (msg.requestId) {
+      const key = `${msg.action}:${msg.requestId}`;
+      const pendingHandler = this.pendingRequests.get(key);
+      if (pendingHandler) {
+        pendingHandler(
+          msg.action === "metadata.replay-complete" ? msg : msg.payload,
+        );
+        return;
+      }
     }
 
     switch (msg.action) {
@@ -217,6 +283,10 @@ export class ControlChannel {
         break;
       case "metadata.epochChange":
         this.config.callbacks.onEpochChange(msg.payload as EpochState);
+        break;
+      case "metadata.replay-complete":
+        // Handled by pendingRequests above if requestId matches.
+        // If no handler registered, just ignore.
         break;
       case "pong":
         break;

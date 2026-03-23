@@ -7,6 +7,9 @@ import * as Y from "yjs";
 import type { PluginLogger } from "../shared/logger";
 import type { FileId } from "../shared/types";
 
+/** Origin marker for local edits, used to distinguish from remote Y.Doc updates. */
+export const LOCAL_ORIGIN = "local-edit";
+
 export interface TextDocEntry {
   fileId: FileId;
   doc: Y.Doc;
@@ -69,7 +72,7 @@ export class TextDocManager {
     entry.doc.transact(() => {
       entry.text.delete(0, entry.text.length);
       entry.text.insert(0, content);
-    });
+    }, LOCAL_ORIGIN);
   }
 
   /** Get the current text content of a document. */

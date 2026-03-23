@@ -5,6 +5,7 @@
 
 import DiffMatchPatch from "diff-match-patch";
 import type * as Y from "yjs";
+import { LOCAL_ORIGIN } from "./text-doc-manager";
 
 const dmp = new DiffMatchPatch();
 
@@ -36,13 +37,5 @@ export function importTextViaDiff(yText: Y.Text, newContent: string): void {
         offset += text.length;
       }
     }
-  });
-}
-
-/**
- * Check if two text contents are meaningfully different.
- * Handles trailing newline normalization.
- */
-export function isContentChanged(a: string, b: string): boolean {
-  return a !== b;
+  }, LOCAL_ORIGIN);
 }

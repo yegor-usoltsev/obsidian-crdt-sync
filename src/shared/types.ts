@@ -48,6 +48,9 @@ export interface MetadataCommit {
   contentAnchor: number;
   revision: number;
   epoch: string;
+  operationType: MetadataIntentType | "content-update" | "restore";
+  contentDigest?: string;
+  contentSize?: number;
 }
 
 /** Rejection from server for an invalid intent. */
