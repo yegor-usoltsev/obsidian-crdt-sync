@@ -1,9 +1,13 @@
 /**
  * Vault watcher: listens to vault events, debounces, suppresses echoes,
  * and deduplicates directory rename/delete child operations.
+ *
+ * Uses plugin.registerEvent() for automatic cleanup on unload.
+ * Defers event registration behind workspace.onLayoutReady() to skip
+ * the startup create event flood.
  */
 
-import type { TAbstractFile, Vault } from "obsidian";
+import type { Plugin, TAbstractFile, Vault, Workspace } from "obsidian";
 import type { PluginLogger } from "../shared/logger";
 import { DEBOUNCE } from "./bootstrap";
 import { EchoPrevention } from "./echo-prevention";
@@ -20,6 +24,8 @@ export class VaultWatcher {
   private deps: VaultWatcherDeps;
   private echo = new EchoPrevention();
   private vault: Vault;
+  private plugin: Plugin;
+  private workspace: Workspace;
 
   // Debounce state
   private createTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -28,9 +34,12 @@ export class VaultWatcher {
   // Directory operation dedup: tracks paths covered by directory ops
   private recentDirOps = new Set<string>();
   private dirOpTimer: ReturnType<typeof setTimeout> | null = null;
+  private started = false;
 
-  constructor(vault: Vault, deps: VaultWatcherDeps) {
-    this.vault = vault;
+  constructor(plugin: Plugin, deps: VaultWatcherDeps) {
+    this.plugin = plugin;
+    this.vault = plugin.app.vault;
+    this.workspace = plugin.app.workspace;
     this.deps = deps;
   }
 
@@ -39,45 +48,20 @@ export class VaultWatcher {
     return this.echo;
   }
 
-  /** Start watching vault events. */
+  /** Start watching vault events (deferred behind onLayoutReady). */
   start(): void {
-    this.vault.on(
-      "create",
-      this.handleCreate as (...data: unknown[]) => unknown,
-    );
-    this.vault.on(
-      "modify",
-      this.handleModify as (...data: unknown[]) => unknown,
-    );
-    this.vault.on(
-      "delete",
-      this.handleDelete as (...data: unknown[]) => unknown,
-    );
-    this.vault.on(
-      "rename",
-      this.handleRename as (...data: unknown[]) => unknown,
-    );
-    this.deps.logger.debug("Vault watcher started");
+    if (this.started) return;
+    this.started = true;
+
+    this.workspace.onLayoutReady(() => {
+      this.registerEvents();
+      this.deps.logger.debug("Vault watcher started (layout ready)");
+    });
   }
 
   /** Stop watching vault events. */
   stop(): void {
-    this.vault.off(
-      "create",
-      this.handleCreate as (...data: unknown[]) => unknown,
-    );
-    this.vault.off(
-      "modify",
-      this.handleModify as (...data: unknown[]) => unknown,
-    );
-    this.vault.off(
-      "delete",
-      this.handleDelete as (...data: unknown[]) => unknown,
-    );
-    this.vault.off(
-      "rename",
-      this.handleRename as (...data: unknown[]) => unknown,
-    );
+    this.started = false;
 
     // Clear all timers
     for (const timer of this.createTimers.values()) clearTimeout(timer);
@@ -90,7 +74,36 @@ export class VaultWatcher {
     this.deps.logger.debug("Vault watcher stopped");
   }
 
+  private registerEvents(): void {
+    // Use plugin.registerEvent() for automatic cleanup on unload
+    this.plugin.registerEvent(
+      this.vault.on(
+        "create",
+        this.handleCreate as (...data: unknown[]) => unknown,
+      ),
+    );
+    this.plugin.registerEvent(
+      this.vault.on(
+        "modify",
+        this.handleModify as (...data: unknown[]) => unknown,
+      ),
+    );
+    this.plugin.registerEvent(
+      this.vault.on(
+        "delete",
+        this.handleDelete as (...data: unknown[]) => unknown,
+      ),
+    );
+    this.plugin.registerEvent(
+      this.vault.on(
+        "rename",
+        this.handleRename as (...data: unknown[]) => unknown,
+      ),
+    );
+  }
+
   private handleCreate = (file: TAbstractFile): void => {
+    if (!this.started) return;
     const path = file.path;
     if (this.echo.consumeWrite(path)) return;
 
@@ -108,6 +121,7 @@ export class VaultWatcher {
   };
 
   private handleModify = (file: TAbstractFile): void => {
+    if (!this.started) return;
     const path = file.path;
     if (this.echo.consumeWrite(path)) return;
     if (this.isChildOfRecentDirOp(path)) return;
@@ -126,6 +140,7 @@ export class VaultWatcher {
   };
 
   private handleDelete = (file: TAbstractFile): void => {
+    if (!this.started) return;
     const path = file.path;
     if (this.echo.consumeDelete(path)) return;
     if (this.isChildOfRecentDirOp(path)) return;
@@ -139,6 +154,7 @@ export class VaultWatcher {
   };
 
   private handleRename = (file: TAbstractFile, oldPath: string): void => {
+    if (!this.started) return;
     const newPath = file.path;
     if (this.echo.consumeRename(oldPath, newPath)) return;
     if (this.isChildOfRecentDirOp(oldPath)) return;

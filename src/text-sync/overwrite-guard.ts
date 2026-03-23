@@ -11,7 +11,7 @@ export interface OverwriteGuardDeps {
 
 /**
  * Safely apply remote text content to a local file.
- * Re-stats the file before writing to detect concurrent local changes.
+ * Uses vault.process() for atomic read-modify-write semantics.
  *
  * @returns true if the write was performed, false if aborted due to local change.
  */
@@ -28,7 +28,7 @@ export async function safeWriteTextContent(
     return false;
   }
 
-  await deps.vault.modify(file, newContent);
+  await deps.vault.process(file, () => newContent);
   return true;
 }
 

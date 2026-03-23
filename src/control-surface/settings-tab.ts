@@ -3,7 +3,7 @@
  * and manual sync/repair actions.
  */
 
-import { type App, PluginSettingTab, Setting } from "obsidian";
+import { type App, PluginSettingTab, SecretComponent, Setting } from "obsidian";
 import type CrdtSyncPlugin from "../main";
 
 export interface SyncSettings {
@@ -81,15 +81,14 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Auth secret")
       .setDesc("Authentication token (stored in secure storage)")
-      .addText((text) => {
-        text.inputEl.type = "password";
-        // Load from secure storage
-        this.plugin.loadAuthToken().then((token) => {
-          text.setValue(token ?? "");
+      .addComponent((el) => {
+        const secret = new SecretComponent(this.app, el);
+        const token = this.plugin.loadAuthToken();
+        if (token) secret.setValue(token);
+        secret.onChange((value) => {
+          this.plugin.saveAuthToken(value);
         });
-        text.onChange(async (value) => {
-          await this.plugin.saveAuthToken(value);
-        });
+        return secret;
       });
 
     new Setting(containerEl)
@@ -104,7 +103,7 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "Actions" });
+    new Setting(containerEl).setHeading().setName("Actions");
 
     new Setting(containerEl)
       .setName("Run full sync")
