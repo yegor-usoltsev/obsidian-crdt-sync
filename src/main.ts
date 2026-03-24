@@ -61,8 +61,6 @@ import { HocuspocusClient } from "./text-sync/hocuspocus-client";
 import { safeWriteTextContent } from "./text-sync/overwrite-guard";
 import { TextDocManager } from "./text-sync/text-doc-manager";
 
-const AUTH_SECRET_NAME = "crdt-sync-auth-token";
-
 export default class CrdtSyncPlugin extends Plugin {
   settings: SyncSettings = { ...DEFAULT_SETTINGS };
   private logger!: PluginLogger;
@@ -596,13 +594,11 @@ export default class CrdtSyncPlugin extends Plugin {
     this.logger?.setDebug(this.settings.debugLogging);
   }
 
-  // Auth token in Obsidian secret storage
+  // Auth token: dereference the user-chosen secret name from secret storage
   loadAuthToken(): string | null {
-    return this.app.secretStorage.getSecret(AUTH_SECRET_NAME) ?? null;
-  }
-
-  saveAuthToken(token: string): void {
-    this.app.secretStorage.setSecret(AUTH_SECRET_NAME, token);
+    const name = this.settings.authSecretName;
+    if (!name) return null;
+    return this.app.secretStorage.getSecret(name) ?? null;
   }
 
   // --- Sync actions ---

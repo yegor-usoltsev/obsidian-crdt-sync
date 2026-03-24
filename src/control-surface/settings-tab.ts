@@ -17,16 +17,19 @@ export { validateAuthToken, validateServerUrl };
 
 export interface SyncSettings {
   serverUrl: string;
+  authSecretName: string;
   debugLogging: boolean;
 }
 
 export const DEFAULT_SETTINGS: SyncSettings = {
   serverUrl: "",
+  authSecretName: "",
   debugLogging: false,
 };
 
 export class CrdtSyncSettingTab extends PluginSettingTab {
   plugin: CrdtSyncPlugin;
+  private urlDebounce: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, plugin: CrdtSyncPlugin) {
     super(app, plugin);
@@ -45,37 +48,34 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
           .setPlaceholder("wss://your-server.example.com")
           .setValue(this.plugin.settings.serverUrl)
           .onChange(async (value) => {
-            if (value) {
-              const error = validateServerUrl(value);
-              if (error) {
-                new Notice(error);
-                return;
+            if (this.urlDebounce) clearTimeout(this.urlDebounce);
+            this.urlDebounce = setTimeout(async () => {
+              if (value) {
+                const error = validateServerUrl(value);
+                if (error) {
+                  new Notice(error);
+                  return;
+                }
               }
-            }
-            this.plugin.settings.serverUrl = value;
-            await this.plugin.saveSettings();
+              this.plugin.settings.serverUrl = value;
+              await this.plugin.saveSettings();
+            }, 600);
           }),
       );
 
     new Setting(containerEl)
       .setName("Auth token")
-      .setDesc("Authentication token stored in Obsidian secret storage.")
-      .addComponent((el) => {
-        const secret = new SecretComponent(this.app, el);
-        const token = this.plugin.loadAuthToken();
-        if (token) secret.setValue(token);
-        secret.onChange((value) => {
-          if (value) {
-            const error = validateAuthToken(value);
-            if (error) {
-              new Notice(error);
-              return;
-            }
-          }
-          this.plugin.saveAuthToken(value);
-        });
-        return secret;
-      });
+      .setDesc(
+        "Select a secret from Obsidian secret storage to use as the auth token.",
+      )
+      .addComponent((el) =>
+        new SecretComponent(this.app, el)
+          .setValue(this.plugin.settings.authSecretName)
+          .onChange(async (value) => {
+            this.plugin.settings.authSecretName = value;
+            await this.plugin.saveSettings();
+          }),
+      );
 
     new Setting(containerEl)
       .setName("Debug logging")
