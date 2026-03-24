@@ -25,11 +25,15 @@ export class PluginLogger {
   }
 
   info(message: string, data?: Record<string, unknown>): void {
-    console.info(`[${this.context}] ${message}`, data ?? "");
+    if (this.debugEnabled) {
+      console.info(`[${this.context}] ${message}`, data ?? "");
+    }
   }
 
   warn(message: string, data?: Record<string, unknown>): void {
-    console.warn(`[${this.context}] ${message}`, data ?? "");
+    if (this.debugEnabled) {
+      console.warn(`[${this.context}] ${message}`, data ?? "");
+    }
   }
 
   error(message: string, data?: Record<string, unknown>): void {

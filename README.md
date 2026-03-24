@@ -65,6 +65,7 @@ When a device connects, it resolves canonical metadata first (file identities, p
 
 - **Data loss**: This is early-stage software. Bugs in sync logic could corrupt or lose vault data. Always maintain independent backups.
 - **Server trust**: All vault content is transmitted to and stored on your self-hosted server in plaintext (beyond TLS). Whoever controls the server can read your entire vault.
+- **Network and file access**: The plugin continuously reads and writes vault files and sends synced content to your configured server. It does not include telemetry, ads, or third-party analytics.
 - **TLS required**: Always use `wss://` for remote servers. The plugin enforces this and rejects `ws://` for non-localhost addresses.
 - **Auth token**: The shared token is the only authentication factor. Use a strong random value generated during server setup and keep it secret. It is stored in Obsidian's secure storage and never written to the data file.
 - **Protocol stability**: The sync protocol and storage format may change in breaking ways between releases while the project is in early development.

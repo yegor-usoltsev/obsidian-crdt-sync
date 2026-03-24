@@ -58,8 +58,8 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Auth secret")
-      .setDesc("Authentication token (stored in secure storage)")
+      .setName("Auth token")
+      .setDesc("Authentication token stored in Obsidian secret storage.")
       .addComponent((el) => {
         const secret = new SecretComponent(this.app, el);
         const token = this.plugin.loadAuthToken();
@@ -88,8 +88,6 @@ export class CrdtSyncSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
-
-    new Setting(containerEl).setHeading().setName("Actions");
 
     new Setting(containerEl)
       .setName("Run full sync")

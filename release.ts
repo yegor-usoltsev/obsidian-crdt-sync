@@ -95,7 +95,7 @@ async function main() {
 
   await gitOutput(["add", "manifest.json", "versions.json"]);
   await gitOutput(["commit", "-m", `Release: ${nextVersion}`]);
-  await gitOutput(["tag", nextTag]);
+  await gitOutput(["tag", "-a", nextTag, "-m", nextTag]);
   await gitOutput(["push", "origin", "main"]);
   await gitOutput(["push", "origin", nextTag]);
 

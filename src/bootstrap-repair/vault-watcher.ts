@@ -76,30 +76,10 @@ export class VaultWatcher {
 
   private registerEvents(): void {
     // Use plugin.registerEvent() for automatic cleanup on unload
-    this.plugin.registerEvent(
-      this.vault.on(
-        "create",
-        this.handleCreate as (...data: unknown[]) => unknown,
-      ),
-    );
-    this.plugin.registerEvent(
-      this.vault.on(
-        "modify",
-        this.handleModify as (...data: unknown[]) => unknown,
-      ),
-    );
-    this.plugin.registerEvent(
-      this.vault.on(
-        "delete",
-        this.handleDelete as (...data: unknown[]) => unknown,
-      ),
-    );
-    this.plugin.registerEvent(
-      this.vault.on(
-        "rename",
-        this.handleRename as (...data: unknown[]) => unknown,
-      ),
-    );
+    this.plugin.registerEvent(this.vault.on("create", this.handleCreate));
+    this.plugin.registerEvent(this.vault.on("modify", this.handleModify));
+    this.plugin.registerEvent(this.vault.on("delete", this.handleDelete));
+    this.plugin.registerEvent(this.vault.on("rename", this.handleRename));
   }
 
   private handleCreate = (file: TAbstractFile): void => {

@@ -2,6 +2,7 @@
  * Binary blob sync client: upload/download orchestration via HTTP.
  */
 
+import { requestUrl } from "obsidian";
 import type { PluginLogger } from "../shared/logger";
 import type { FileId } from "../shared/types";
 
@@ -39,23 +40,23 @@ export class BlobClient {
       size: content.byteLength,
     });
 
-    const response = await fetch(url, {
+    const response = await requestUrl({
+      url,
       method: "PUT",
       headers: {
         Authorization: `Bearer ${this.deps.authToken}`,
-        "Content-Type": "application/octet-stream",
         "X-Content-Digest": digest,
       },
+      contentType: "application/octet-stream",
       body: content,
+      throw: false,
     });
 
-    if (!response.ok) {
-      throw new Error(
-        `Blob upload failed: ${response.status} ${response.statusText}`,
-      );
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Blob upload failed: ${response.status}`);
     }
 
-    return response.json();
+    return response.json as BlobMetadata;
   }
 
   /** Download a binary blob from the server. */
@@ -66,20 +67,20 @@ export class BlobClient {
     const url = `${this.deps.baseUrl}/blobs/${encodeURIComponent(fileId)}`;
     this.deps.logger.debug("Downloading blob", { fileId });
 
-    const response = await fetch(url, {
+    const response = await requestUrl({
+      url,
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.deps.authToken}`,
       },
+      throw: false,
     });
 
-    if (!response.ok) {
-      throw new Error(
-        `Blob download failed: ${response.status} ${response.statusText}`,
-      );
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Blob download failed: ${response.status}`);
     }
 
-    const content = await response.arrayBuffer();
+    const content = response.arrayBuffer;
 
     if (expectedDigest) {
       const actual = await computeDigest(content);
@@ -96,13 +97,15 @@ export class BlobClient {
   /** Check if a blob exists on the server by digest. */
   async exists(digest: string): Promise<boolean> {
     const url = `${this.deps.baseUrl}/blobs/check/${encodeURIComponent(digest)}`;
-    const response = await fetch(url, {
+    const response = await requestUrl({
+      url,
       method: "HEAD",
       headers: {
         Authorization: `Bearer ${this.deps.authToken}`,
       },
+      throw: false,
     });
-    return response.ok;
+    return response.status >= 200 && response.status < 300;
   }
 }
 

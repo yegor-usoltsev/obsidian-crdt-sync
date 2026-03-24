@@ -28,6 +28,7 @@ export interface LocalSyncStore {
 
   // File registry cache
   getFile(fileId: string): Promise<FileMetadata | undefined>;
+  getFileByPath(path: string): Promise<FileMetadata | undefined>;
   putFile(meta: FileMetadata): Promise<void>;
   deleteFile(fileId: string): Promise<void>;
   getAllFiles(): Promise<FileMetadata[]>;
@@ -75,6 +76,11 @@ export function createLocalSyncStore(vaultId: string): LocalSyncStore {
 
     // File registry
     getFile: (fileId) => storeGet(requireDb(), "files", fileId),
+    async getFileByPath(path: string) {
+      const entries = await storeGetAll<FileMetadata>(requireDb(), "files");
+      return entries.find((e) => e.value.path === path && !e.value.deleted)
+        ?.value;
+    },
     putFile: (meta) => storePut(requireDb(), "files", meta.fileId, meta),
     deleteFile: (fileId) => storeDelete(requireDb(), "files", fileId),
     async getAllFiles() {

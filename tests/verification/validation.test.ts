@@ -326,7 +326,7 @@ describe("18.16: vault-identity binding", () => {
     );
     // Verify: when vaultMismatch is true, rebootstrap is called
     expect(source).toContain("vaultMismatch");
-    expect(source).toContain("this.bootstrapManager!.rebootstrap(");
+    expect(source).toContain("bootstrapManager.rebootstrap(");
     // The ternary selects rebootstrap vs bootstrap based on vaultMismatch
     const ternaryIdx = source.indexOf("const bootstrapFn = vaultMismatch");
     expect(ternaryIdx).toBeGreaterThan(0);
@@ -438,7 +438,7 @@ describe("18.10: settings files never use Hocuspocus", () => {
     // In onFileModify, the settings check must come before text import
     const onModifyStart = source.indexOf("onFileModify: async (path)");
     const settingsCheck = source.indexOf(
-      "normalized.startsWith(`${configDir}/`)",
+      "normalized.startsWith(`${cfgDir}/`)",
       onModifyStart,
     );
     const textCheck = source.indexOf('fileMeta.kind === "text"', onModifyStart);

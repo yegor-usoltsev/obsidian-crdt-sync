@@ -40,7 +40,23 @@ export class HocuspocusClient {
       name: fileId, // document name = file identity
       document: entry.doc,
       token: this.deps.authToken,
+      onAuthenticated: () => {
+        this.deps.logger.debug("Text doc authenticated", { fileId });
+      },
+      onAuthenticationFailed: ({ reason }) => {
+        this.deps.logger.warn("Text doc authentication failed", {
+          fileId,
+          reason,
+        });
+      },
+      onStatus: ({ status }) => {
+        this.deps.logger.debug("Text doc status changed", {
+          fileId,
+          status,
+        });
+      },
       onSynced: () => {
+        if (entry.synced) return; // Prevent duplicate listener registration
         entry.synced = true;
         this.deps.logger.debug("Text doc synced", { fileId });
 
@@ -76,7 +92,6 @@ export class HocuspocusClient {
   disconnect(fileId: FileId): void {
     const provider = this.providers.get(fileId);
     if (provider) {
-      provider.disconnect();
       provider.destroy();
       this.providers.delete(fileId);
     }
@@ -84,8 +99,7 @@ export class HocuspocusClient {
 
   /** Disconnect all providers. */
   disconnectAll(): void {
-    for (const [_fileId, provider] of this.providers) {
-      provider.disconnect();
+    for (const provider of this.providers.values()) {
       provider.destroy();
     }
     this.providers.clear();

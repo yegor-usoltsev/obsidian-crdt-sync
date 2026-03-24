@@ -31,23 +31,3 @@ export async function safeWriteTextContent(
   await deps.vault.process(file, () => newContent);
   return true;
 }
-
-/**
- * Safely write binary content to a local file.
- *
- * @returns true if the write was performed, false if aborted.
- */
-export async function safeWriteBinaryContent(
-  deps: OverwriteGuardDeps,
-  file: TFile,
-  expectedMtime: number,
-  newContent: ArrayBuffer,
-): Promise<boolean> {
-  const currentStat = file.stat;
-  if (currentStat.mtime !== expectedMtime) {
-    return false;
-  }
-
-  await deps.vault.modifyBinary(file, newContent);
-  return true;
-}

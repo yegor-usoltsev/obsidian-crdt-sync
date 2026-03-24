@@ -15,7 +15,7 @@ import {
   Plugin,
   Setting,
   SuggestModal,
-  type TFile,
+  TFile,
 } from "obsidian";
 import * as Y from "yjs";
 import { BlobClient, computeDigest } from "./blob-sync/blob-client";
@@ -58,10 +58,7 @@ import {
 } from "./shared/types";
 import { importTextViaDiff } from "./text-sync/diff-bridge";
 import { HocuspocusClient } from "./text-sync/hocuspocus-client";
-import {
-  safeWriteBinaryContent,
-  safeWriteTextContent,
-} from "./text-sync/overwrite-guard";
+import { safeWriteTextContent } from "./text-sync/overwrite-guard";
 import { TextDocManager } from "./text-sync/text-doc-manager";
 
 const AUTH_SECRET_NAME = "crdt-sync-auth-token";
@@ -82,6 +79,7 @@ export default class CrdtSyncPlugin extends Plugin {
   private settingsClient: SettingsClient | null = null;
   private bootstrapManager: BootstrapManager | null = null;
   private vaultWatcher: VaultWatcher | null = null;
+  private startupPromise: Promise<void> | null = null;
 
   // Commit processing queue for serialized materialization
   private commitQueue: Promise<void> = Promise.resolve();
@@ -112,451 +110,6 @@ export default class CrdtSyncPlugin extends Plugin {
 
     // Settings tab
     this.addSettingTab(new CrdtSyncSettingTab(this.app, this));
-
-    // 1. Local sync store
-    const vaultId = this.app.vault.getName() + "-crdt-sync";
-    this.localStore = createLocalSyncStore(vaultId);
-    await this.localStore.open();
-
-    // Vault identity binding
-    let vaultMismatch = false;
-    const storedVaultId = await this.localStore.getVaultId();
-    if (storedVaultId && storedVaultId !== vaultId) {
-      this.logger.warn(
-        "Vault identity mismatch — previous vault used this store",
-        {
-          stored: storedVaultId,
-          current: vaultId,
-        },
-      );
-      vaultMismatch = true;
-    } else if (!storedVaultId) {
-      await this.localStore.setVaultId(vaultId);
-    }
-
-    // Ensure clientId
-    let clientId = await this.localStore.getClientId();
-    if (!clientId) {
-      clientId = crypto.randomUUID();
-      await this.localStore.setClientId(clientId);
-    }
-
-    // 2. Policy engine
-    this.policyEngine = createFilePolicyEngine();
-
-    // 3. Wire server-connected modules if configured
-    const authToken = this.loadAuthToken();
-    const serverUrl = this.settings.serverUrl;
-
-    // Validate config before connecting
-    const serverUrlError = serverUrl ? validateServerUrl(serverUrl) : null;
-    const authTokenError = authToken ? validateAuthToken(authToken) : null;
-    if (serverUrlError) {
-      this.logger.warn("Invalid server URL, running offline", {
-        error: serverUrlError,
-      });
-    }
-    if (authTokenError) {
-      this.logger.warn("Invalid auth token, running offline", {
-        error: authTokenError,
-      });
-    }
-
-    if (serverUrl && authToken && !serverUrlError && !authTokenError) {
-      // Convert ws(s) URL to http(s) for REST endpoints
-      const httpBaseUrl = serverUrl
-        .replace(/^wss:/, "https:")
-        .replace(/^ws:/, "http:");
-
-      // Control channel client
-      this.controlChannel = new ControlChannel({
-        serverUrl,
-        authToken,
-        logger: this.logger,
-        callbacks: {
-          onCommit: (commit: MetadataCommit) => {
-            this.metadataClient?.handleCommit(commit);
-          },
-          onReject: (reject: MetadataReject) => {
-            this.metadataClient?.handleReject(reject);
-          },
-          onEpochChange: (epoch: EpochState) => {
-            this.metadataClient?.handleEpochChange(epoch);
-          },
-          onStateChange: (state: ControlChannelState) => {
-            if (state === "connected") {
-              this.setStatus("synced");
-            } else if (state === "reconnecting") {
-              this.setStatus("syncing");
-            } else if (state === "disconnected") {
-              this.setStatus("offline");
-            }
-          },
-        },
-      });
-
-      // Metadata client
-      const store = this.localStore;
-      const logger = this.logger;
-      const channel = this.controlChannel;
-      const finalClientId = clientId;
-      this.metadataClient = new MetadataClient({
-        sendIntent: (intent) => channel.send(intent),
-        onCommit: async (commit, wasPending) => {
-          // Capture pre-commit state before putFile overwrites it.
-          // Needed for rename (old path) and content-update (old digest).
-          const previousFile = !wasPending
-            ? await store.getFile(commit.fileId)
-            : undefined;
-
-          await store.putFile({
-            fileId: commit.fileId,
-            path: commit.path,
-            kind: commit.kind,
-            deleted: commit.deleted,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            contentAnchor: commit.contentAnchor,
-            contentDigest: commit.contentDigest,
-            contentSize: commit.contentSize,
-          });
-          await store.dequeuePending(commit.operationId);
-          channel.setLastKnownRevision(commit.revision);
-
-          // Materialize remote commits
-          if (!wasPending) {
-            const prevPath = previousFile?.path;
-            const prevDigest = previousFile?.contentDigest;
-            this.enqueueCommit(() =>
-              this.materializeCommit(commit, prevPath, prevDigest),
-            );
-          }
-        },
-        onReject: async (reject) => {
-          logger.warn("Intent rejected", {
-            operationId: reject.operationId,
-            reason: reject.reason,
-          });
-          await store.dequeuePending(reject.operationId);
-        },
-        onEpochChange: async (epoch) => {
-          await this.bootstrapManager?.rebootstrap(epoch);
-        },
-        generateOperationId: () => crypto.randomUUID(),
-        getClientId: () => finalClientId,
-        logger: this.logger,
-      });
-
-      // Restore pending intents from durable store
-      const pendingIntents = await store.getAllPending();
-      if (pendingIntents.length > 0) {
-        this.metadataClient.restorePendingIntents(pendingIntents);
-        this.logger.info("Restored pending intents", {
-          count: pendingIntents.length,
-        });
-      }
-
-      // Text doc manager
-      this.textDocManager = new TextDocManager({ logger: this.logger });
-
-      // Restore offline text progress before connecting Hocuspocus
-      {
-        const offlineProgress = await store.getAllOfflineProgress();
-        for (const { fileId, data } of offlineProgress) {
-          const entry = this.textDocManager.getOrCreate(fileId);
-          Y.applyUpdate(entry.doc, data);
-          this.logger.debug("Restored offline text progress", { fileId });
-        }
-        if (offlineProgress.length > 0) {
-          this.logger.info("Restored offline text progress", {
-            count: offlineProgress.length,
-          });
-        }
-      }
-
-      // Hocuspocus client (text doc sync)
-      const docsWsUrl = serverUrl.replace(/\/$/, "");
-      this.hocuspocusClient = new HocuspocusClient({
-        wsUrl: `${docsWsUrl}/docs`,
-        authToken,
-        logger: this.logger,
-        docManager: this.textDocManager,
-        onSynced: (fileId) => {
-          // Clear offline progress after successful sync
-          this.localStore?.deleteOfflineProgress(fileId);
-        },
-        onRemoteTextUpdate: async (fileId, text) => {
-          // Look up file path from local store
-          const allFiles = await this.localStore?.getAllFiles();
-          const fileMeta = allFiles?.find(
-            (f) => f.fileId === fileId && !f.deleted,
-          );
-          if (!fileMeta) return;
-
-          const echo = this.vaultWatcher?.getEchoPrevention();
-          echo?.markWritten(fileMeta.path);
-          const existing = this.app.vault.getAbstractFileByPath(fileMeta.path);
-          if (existing && "extension" in existing) {
-            const written = await safeWriteTextContent(
-              { vault: this.app.vault },
-              existing as TFile,
-              (existing as TFile).stat.mtime,
-              text,
-            );
-            if (!written) {
-              // Overwrite guard failed — create conflict artifact
-              const artifactPath = conflictArtifactName(
-                fileMeta.path,
-                Date.now(),
-                "local",
-              );
-              try {
-                await this.app.vault.create(artifactPath, text);
-              } catch {
-                // ignore
-              }
-            }
-          } else if (!existing) {
-            await this.ensureParentDirs(fileMeta.path);
-            echo?.markWritten(fileMeta.path);
-            try {
-              await this.app.vault.create(fileMeta.path, text);
-            } catch {
-              // File may already exist
-            }
-          }
-        },
-      });
-
-      // Blob client
-      this.blobClient = new BlobClient({
-        baseUrl: httpBaseUrl,
-        authToken,
-        logger: this.logger,
-      });
-
-      // Settings client
-      this.settingsClient = new SettingsClient({
-        baseUrl: httpBaseUrl,
-        authToken,
-        logger: this.logger,
-      });
-
-      // Bootstrap manager
-      this.bootstrapManager = new BootstrapManager({
-        logger: this.logger,
-        store: this.localStore,
-        fetchCanonicalMetadata: async () => {
-          if (!channel || channel.getState() !== "connected") {
-            // Offline fallback: return local state
-            const epochState = await store.getEpochState();
-            const files = await store.getAllFiles();
-            return { files, epoch: epochState ?? { epoch: "", revision: 0 } };
-          }
-
-          // Request server diagnostics for epoch info
-          const diag = (await channel.requestResponse(
-            { action: "diagnostics.request" },
-            "diagnostics.response",
-          )) as { epoch: string; revision: number } | undefined;
-
-          const epoch: EpochState = diag
-            ? { epoch: diag.epoch, revision: diag.revision }
-            : { epoch: "", revision: 0 };
-
-          // Subscribe from revision 0 to get all file metadata.
-          // Use replay-complete for deterministic end-of-replay signal.
-          const requestId = crypto.randomUUID();
-          const replayPromise = channel.awaitReplayComplete(requestId);
-          channel.sendRaw({
-            action: "metadata.subscribe",
-            sinceRevision: 0,
-            requestId,
-          });
-
-          await replayPromise;
-
-          const files = await store.getAllFiles();
-          return { files, epoch };
-        },
-        setStatus: (status) => this.setStatus(status),
-        confirmDestructive: (message) => {
-          return new Promise<boolean>((resolve) => {
-            const modal = new ConfirmModal(this.app, message, resolve);
-            modal.open();
-          });
-        },
-      });
-
-      // Vault watcher
-      this.vaultWatcher = new VaultWatcher(this, {
-        logger: this.logger,
-        onFileCreate: (path, isDirectory) => {
-          const normalized = normalizePath(path);
-          if (isDirectory) {
-            this.metadataClient?.create(normalized, "directory");
-            return;
-          }
-          const eligibility = this.policyEngine?.checkEligibility(normalized);
-          if (!eligibility?.eligible) return;
-          this.metadataClient?.create(normalized, eligibility.kind);
-        },
-        onFileModify: async (path) => {
-          const normalized = normalizePath(path);
-          this.logger.debug("File modified", { path: normalized });
-
-          // Resolve fileId from local store
-          const allFiles = await this.localStore?.getAllFiles();
-          const fileMeta = allFiles?.find(
-            (f) => f.path === normalized && !f.deleted,
-          );
-          if (!fileMeta) return;
-
-          // Settings transport precedence: allowlisted config files use settings client
-          const configDir = ".obsidian";
-          if (normalized.startsWith(`${configDir}/`) && this.settingsClient) {
-            const configRelativePath = normalized.slice(configDir.length + 1);
-            const policy = isAllowlistedSettingsFile(configRelativePath);
-            if (policy) {
-              const vaultFile =
-                this.app.vault.getAbstractFileByPath(normalized);
-              if (vaultFile && "extension" in vaultFile) {
-                const content = await this.app.vault.read(vaultFile as TFile);
-                const contentBytes = new TextEncoder().encode(content);
-                const digest = await computeDigest(contentBytes);
-                try {
-                  await this.settingsClient.upload(
-                    configRelativePath,
-                    content,
-                    digest,
-                  );
-                } catch (err) {
-                  this.logger.error("Settings upload failed", {
-                    path: normalized,
-                    error: err instanceof Error ? err.message : String(err),
-                  });
-                }
-              }
-              return; // Skip generic text/binary handling
-            }
-          }
-
-          if (fileMeta.kind === "text") {
-            // Import current vault content into Y.Doc via diff bridge
-            const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
-            if (vaultFile && "extension" in vaultFile) {
-              const content = await this.app.vault.read(vaultFile as TFile);
-              const entry = this.textDocManager?.get(fileMeta.fileId);
-              if (entry) {
-                importTextViaDiff(entry.text, content);
-              } else {
-                this.textDocManager?.importText(fileMeta.fileId, content);
-              }
-
-              // Save offline progress if disconnected
-              if (this.controlChannel?.getState() !== "connected") {
-                const docEntry = this.textDocManager?.get(fileMeta.fileId);
-                if (docEntry) {
-                  const update = Y.encodeStateAsUpdate(docEntry.doc);
-                  await this.localStore?.saveOfflineProgress(
-                    fileMeta.fileId,
-                    update,
-                  );
-                }
-              }
-            }
-          } else if (fileMeta.kind === "binary" && this.blobClient) {
-            // Upload binary content
-            const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
-            if (vaultFile && "extension" in vaultFile) {
-              const content = await this.app.vault.readBinary(
-                vaultFile as TFile,
-              );
-              const digest = await computeDigest(content);
-              try {
-                await this.blobClient.upload(fileMeta.fileId, content, digest);
-              } catch (err) {
-                this.logger.error("Blob upload failed", {
-                  path: normalized,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
-            }
-          }
-        },
-        onFileDelete: async (path) => {
-          const normalized = normalizePath(path);
-          this.logger.debug("File deleted", { path: normalized });
-
-          // Resolve fileId and submit delete intent
-          const allFiles = await this.localStore?.getAllFiles();
-          const fileMeta = allFiles?.find(
-            (f) => f.path === normalized && !f.deleted,
-          );
-          if (!fileMeta) return;
-
-          this.metadataClient?.delete(
-            fileMeta.fileId,
-            fileMeta.contentAnchor,
-            fileMeta.contentDigest,
-          );
-        },
-        onFileRename: async (oldPath, newPath) => {
-          const normalizedNew = normalizePath(newPath);
-          this.logger.debug("File renamed", {
-            oldPath,
-            newPath: normalizedNew,
-          });
-
-          // Resolve fileId by old path and submit rename intent
-          const allFiles = await this.localStore?.getAllFiles();
-          const fileMeta = allFiles?.find(
-            (f) => f.path === oldPath && !f.deleted,
-          );
-          if (!fileMeta) return;
-
-          this.metadataClient?.rename(
-            fileMeta.fileId,
-            normalizedNew,
-            fileMeta.contentAnchor,
-          );
-        },
-      });
-
-      // Start connection, run initial bootstrap, then start vault watcher
-      this.controlChannel.connect();
-
-      // Vault identity mismatch forces a clean rebootstrap
-      if (vaultMismatch) {
-        await this.localStore.setVaultId(vaultId);
-      }
-
-      const bootstrapFn = vaultMismatch
-        ? () =>
-            this.bootstrapManager!.rebootstrap({
-              epoch: "vault-identity-mismatch",
-              revision: 0,
-            })
-        : () => this.bootstrapManager!.bootstrap();
-
-      bootstrapFn()
-        .then(async () => {
-          await this.reconcileSettings();
-          this.vaultWatcher?.start();
-        })
-        .catch((err) => {
-          this.logger.error("Initial bootstrap failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          this.setStatus("error");
-          // Start vault watcher anyway to capture local changes
-          this.vaultWatcher?.start();
-        });
-    } else {
-      // Offline mode: no server configured
-      this.setStatus("offline");
-      this.logger.info("No server configured, running in offline mode");
-    }
 
     // Command palette actions
     this.addCommand({
@@ -591,7 +144,424 @@ export default class CrdtSyncPlugin extends Plugin {
       callback: () => this.triggerExportDiagnostics(),
     });
 
+    this.app.workspace.onLayoutReady(() => {
+      if (this.startupPromise) return;
+      this.startupPromise = this.initializeRuntime().catch((err) => {
+        this.logger.error("Runtime startup failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.setStatus("error");
+      });
+    });
+
     this.logger.info("Plugin loaded");
+  }
+
+  private async initializeRuntime(): Promise<void> {
+    const vaultId = `${this.app.vault.getName()}-crdt-sync`;
+    this.localStore = createLocalSyncStore(vaultId);
+    await this.localStore.open();
+
+    let vaultMismatch = false;
+    const storedVaultId = await this.localStore.getVaultId();
+    if (storedVaultId && storedVaultId !== vaultId) {
+      this.logger.warn(
+        "Vault identity mismatch — previous vault used this store",
+        {
+          stored: storedVaultId,
+          current: vaultId,
+        },
+      );
+      vaultMismatch = true;
+    } else if (!storedVaultId) {
+      await this.localStore.setVaultId(vaultId);
+    }
+
+    let clientId = await this.localStore.getClientId();
+    if (!clientId) {
+      clientId = crypto.randomUUID();
+      await this.localStore.setClientId(clientId);
+    }
+
+    this.policyEngine = createFilePolicyEngine(this.app.vault.configDir);
+
+    const authToken = this.loadAuthToken();
+    const serverUrl = this.settings.serverUrl;
+    const serverUrlError = serverUrl ? validateServerUrl(serverUrl) : null;
+    const authTokenError = authToken ? validateAuthToken(authToken) : null;
+
+    if (serverUrlError) {
+      this.logger.warn("Invalid server URL, running offline", {
+        error: serverUrlError,
+      });
+    }
+    if (authTokenError) {
+      this.logger.warn("Invalid auth token, running offline", {
+        error: authTokenError,
+      });
+    }
+
+    if (!serverUrl || !authToken || serverUrlError || authTokenError) {
+      this.setStatus("offline");
+      this.logger.info("No server configured, running in offline mode");
+      return;
+    }
+
+    const httpBaseUrl = serverUrl
+      .replace(/^wss:/, "https:")
+      .replace(/^ws:/, "http:");
+
+    this.controlChannel = new ControlChannel({
+      serverUrl,
+      authToken,
+      logger: this.logger,
+      callbacks: {
+        onCommit: (commit: MetadataCommit) => {
+          this.metadataClient?.handleCommit(commit);
+        },
+        onReject: (reject: MetadataReject) => {
+          this.metadataClient?.handleReject(reject);
+        },
+        onEpochChange: (epoch: EpochState) => {
+          this.metadataClient?.handleEpochChange(epoch);
+        },
+        onStateChange: (state: ControlChannelState) => {
+          if (state === "connected") {
+            this.setStatus("synced");
+          } else if (state === "reconnecting") {
+            this.setStatus("syncing");
+          } else if (state === "disconnected") {
+            this.setStatus("offline");
+          }
+        },
+      },
+    });
+
+    const store = this.localStore;
+    const logger = this.logger;
+    const channel = this.controlChannel;
+    const finalClientId = clientId;
+    this.metadataClient = new MetadataClient({
+      sendIntent: (intent) => channel.send(intent),
+      onCommit: async (commit, wasPending) => {
+        const previousFile = !wasPending
+          ? await store.getFile(commit.fileId)
+          : undefined;
+
+        await store.putFile({
+          fileId: commit.fileId,
+          path: commit.path,
+          kind: commit.kind,
+          deleted: commit.deleted,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          contentAnchor: commit.contentAnchor,
+          contentDigest: commit.contentDigest,
+          contentSize: commit.contentSize,
+        });
+        await store.dequeuePending(commit.operationId);
+        channel.setLastKnownRevision(commit.revision);
+
+        if (!wasPending) {
+          const prevPath = previousFile?.path;
+          const prevDigest = previousFile?.contentDigest;
+          this.enqueueCommit(() =>
+            this.materializeCommit(commit, prevPath, prevDigest),
+          );
+        }
+      },
+      onReject: async (reject) => {
+        logger.warn("Intent rejected", {
+          operationId: reject.operationId,
+          reason: reject.reason,
+        });
+        await store.dequeuePending(reject.operationId);
+      },
+      onEpochChange: async (epoch) => {
+        await this.bootstrapManager?.rebootstrap(epoch);
+      },
+      generateOperationId: () => crypto.randomUUID(),
+      getClientId: () => finalClientId,
+      logger: this.logger,
+    });
+
+    const pendingIntents = await store.getAllPending();
+    if (pendingIntents.length > 0) {
+      this.metadataClient.restorePendingIntents(pendingIntents);
+      this.logger.info("Restored pending intents", {
+        count: pendingIntents.length,
+      });
+    }
+
+    this.textDocManager = new TextDocManager({ logger: this.logger });
+
+    const offlineProgress = await store.getAllOfflineProgress();
+    for (const { fileId, data } of offlineProgress) {
+      try {
+        const entry = this.textDocManager.getOrCreate(fileId);
+        Y.applyUpdate(entry.doc, data);
+        this.logger.debug("Restored offline text progress", { fileId });
+      } catch (err) {
+        this.logger.error("Failed to restore offline text progress", {
+          fileId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await store.deleteOfflineProgress(fileId);
+      }
+    }
+    if (offlineProgress.length > 0) {
+      this.logger.info("Restored offline text progress", {
+        count: offlineProgress.length,
+      });
+    }
+
+    const docsWsUrl = serverUrl.replace(/\/$/, "");
+    this.hocuspocusClient = new HocuspocusClient({
+      wsUrl: `${docsWsUrl}/docs`,
+      authToken,
+      logger: this.logger,
+      docManager: this.textDocManager,
+      onSynced: (fileId) => {
+        this.localStore?.deleteOfflineProgress(fileId);
+      },
+      onRemoteTextUpdate: async (fileId, text) => {
+        const fileMeta = await this.localStore?.getFile(fileId);
+        if (!fileMeta || fileMeta.deleted) return;
+
+        const echo = this.vaultWatcher?.getEchoPrevention();
+        echo?.markWritten(fileMeta.path);
+        const existing = this.app.vault.getAbstractFileByPath(fileMeta.path);
+        if (existing instanceof TFile) {
+          const written = await safeWriteTextContent(
+            { vault: this.app.vault },
+            existing,
+            existing.stat.mtime,
+            text,
+          );
+          if (!written) {
+            const artifactPath = conflictArtifactName(
+              fileMeta.path,
+              Date.now(),
+              "local",
+            );
+            try {
+              await this.app.vault.create(artifactPath, text);
+            } catch {
+              // ignore
+            }
+          }
+        } else if (!existing) {
+          await this.ensureParentDirs(fileMeta.path);
+          echo?.markWritten(fileMeta.path);
+          try {
+            await this.app.vault.create(fileMeta.path, text);
+          } catch {
+            // File may already exist
+          }
+        }
+      },
+    });
+
+    this.blobClient = new BlobClient({
+      baseUrl: httpBaseUrl,
+      authToken,
+      logger: this.logger,
+    });
+
+    this.settingsClient = new SettingsClient({
+      baseUrl: httpBaseUrl,
+      authToken,
+      logger: this.logger,
+    });
+
+    this.bootstrapManager = new BootstrapManager({
+      logger: this.logger,
+      store: this.localStore,
+      fetchCanonicalMetadata: async () => {
+        if (channel.getState() !== "connected") {
+          const epochState = await store.getEpochState();
+          const files = await store.getAllFiles();
+          return { files, epoch: epochState ?? { epoch: "", revision: 0 } };
+        }
+
+        const diag = (await channel.requestResponse(
+          { action: "diagnostics.request" },
+          "diagnostics.response",
+        )) as { epoch: string; revision: number } | undefined;
+
+        const epoch: EpochState = diag
+          ? { epoch: diag.epoch, revision: diag.revision }
+          : { epoch: "", revision: 0 };
+
+        const requestId = crypto.randomUUID();
+        const replayPromise = channel.awaitReplayComplete(requestId);
+        channel.sendRaw({
+          action: "metadata.subscribe",
+          sinceRevision: 0,
+          requestId,
+        });
+
+        await replayPromise;
+
+        const files = await store.getAllFiles();
+        return { files, epoch };
+      },
+      setStatus: (status) => this.setStatus(status),
+      confirmDestructive: (message) =>
+        new Promise<boolean>((resolve) => {
+          const modal = new ConfirmModal(this.app, message, resolve);
+          modal.open();
+        }),
+    });
+
+    this.vaultWatcher = new VaultWatcher(this, {
+      logger: this.logger,
+      onFileCreate: (path, isDirectory) => {
+        const normalized = normalizePath(path);
+        if (isDirectory) {
+          this.metadataClient?.create(normalized, "directory");
+          return;
+        }
+        const eligibility = this.policyEngine?.checkEligibility(normalized);
+        if (!eligibility?.eligible) return;
+        this.metadataClient?.create(normalized, eligibility.kind);
+      },
+      onFileModify: async (path) => {
+        const normalized = normalizePath(path);
+        this.logger.debug("File modified", { path: normalized });
+
+        const fileMeta = await this.localStore?.getFileByPath(normalized);
+        if (!fileMeta) return;
+
+        const cfgDir = this.app.vault.configDir;
+        if (normalized.startsWith(`${cfgDir}/`) && this.settingsClient) {
+          const configRelativePath = normalized.slice(cfgDir.length + 1);
+          const policy = isAllowlistedSettingsFile(configRelativePath);
+          if (policy) {
+            const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
+            if (vaultFile instanceof TFile) {
+              const content = await this.app.vault.read(vaultFile);
+              const contentBytes = new TextEncoder().encode(content);
+              const digest = await computeDigest(contentBytes);
+              try {
+                await this.settingsClient.upload(
+                  configRelativePath,
+                  content,
+                  digest,
+                );
+              } catch (err) {
+                this.logger.error("Settings upload failed", {
+                  path: normalized,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+            return;
+          }
+        }
+
+        if (fileMeta.kind === "text") {
+          const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
+          if (vaultFile instanceof TFile) {
+            const content = await this.app.vault.read(vaultFile);
+            const entry = this.textDocManager?.get(fileMeta.fileId);
+            if (entry) {
+              importTextViaDiff(entry.text, content);
+            } else {
+              this.textDocManager?.importText(fileMeta.fileId, content);
+            }
+
+            if (this.controlChannel?.getState() !== "connected") {
+              const docEntry = this.textDocManager?.get(fileMeta.fileId);
+              if (docEntry) {
+                const update = Y.encodeStateAsUpdate(docEntry.doc);
+                await this.localStore?.saveOfflineProgress(
+                  fileMeta.fileId,
+                  update,
+                );
+              }
+            }
+          }
+        } else if (fileMeta.kind === "binary" && this.blobClient) {
+          const vaultFile = this.app.vault.getAbstractFileByPath(normalized);
+          if (vaultFile instanceof TFile) {
+            const content = await this.app.vault.readBinary(vaultFile);
+            const digest = await computeDigest(content);
+            try {
+              await this.blobClient.upload(fileMeta.fileId, content, digest);
+            } catch (err) {
+              this.logger.error("Blob upload failed", {
+                path: normalized,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+      },
+      onFileDelete: async (path) => {
+        const normalized = normalizePath(path);
+        this.logger.debug("File deleted", { path: normalized });
+
+        const fileMeta = await this.localStore?.getFileByPath(normalized);
+        if (!fileMeta) return;
+
+        this.metadataClient?.delete(
+          fileMeta.fileId,
+          fileMeta.contentAnchor,
+          fileMeta.contentDigest,
+        );
+      },
+      onFileRename: async (oldPath, newPath) => {
+        const normalizedNew = normalizePath(newPath);
+        this.logger.debug("File renamed", {
+          oldPath,
+          newPath: normalizedNew,
+        });
+
+        const fileMeta = await this.localStore?.getFileByPath(oldPath);
+        if (!fileMeta) return;
+
+        this.metadataClient?.rename(
+          fileMeta.fileId,
+          normalizedNew,
+          fileMeta.contentAnchor,
+        );
+      },
+    });
+
+    this.controlChannel.connect();
+
+    if (vaultMismatch) {
+      await this.localStore.setVaultId(vaultId);
+    }
+
+    const bootstrapManager = this.bootstrapManager;
+    if (!bootstrapManager) {
+      this.setStatus("error");
+      this.logger.error("Bootstrap manager was not initialized");
+      return;
+    }
+
+    const bootstrapFn = vaultMismatch
+      ? () =>
+          bootstrapManager.rebootstrap({
+            epoch: "vault-identity-mismatch",
+            revision: 0,
+          })
+      : () => bootstrapManager.bootstrap();
+
+    bootstrapFn()
+      .then(async () => {
+        await this.reconcileSettings();
+        this.vaultWatcher?.start();
+      })
+      .catch((err) => {
+        this.logger.error("Initial bootstrap failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.setStatus("error");
+        this.vaultWatcher?.start();
+      });
   }
 
   override async onunload(): Promise<void> {
@@ -753,8 +723,7 @@ export default class CrdtSyncPlugin extends Plugin {
     }
 
     // Resolve fileId from local store by path
-    const files = await this.localStore?.getAllFiles();
-    const fileMeta = files?.find((f) => f.path === file.path && !f.deleted);
+    const fileMeta = await this.localStore?.getFileByPath(file.path);
     if (!fileMeta) {
       new Notice("File not tracked by sync");
       return;
@@ -782,11 +751,16 @@ export default class CrdtSyncPlugin extends Plugin {
         this.app,
         entries,
         async (entry) => {
+          const channel = this.controlChannel;
+          if (!channel) {
+            new Notice("Not connected to server");
+            return;
+          }
           new Notice(
             `Restoring to version from ${new Date(entry.timestamp).toLocaleString()}…`,
           );
           try {
-            await this.controlChannel!.requestResponse(
+            await channel.requestResponse(
               {
                 action: "history.restore",
                 fileId: fileMeta.fileId,
@@ -895,6 +869,29 @@ export default class CrdtSyncPlugin extends Plugin {
     }
   }
 
+  /** Wait for a text doc entry to sync, with timeout. */
+  private waitForSync(
+    entry: { synced: boolean },
+    timeoutMs = 30_000,
+  ): Promise<void> {
+    if (entry.synced) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Sync timeout")),
+        timeoutMs,
+      );
+      const checkSync = () => {
+        if (entry.synced) {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          setTimeout(checkSync, 100);
+        }
+      };
+      checkSync();
+    });
+  }
+
   /** Ensure all parent directories exist for a file path. */
   private async ensureParentDirs(path: string): Promise<void> {
     const segments = path.split("/");
@@ -920,9 +917,9 @@ export default class CrdtSyncPlugin extends Plugin {
     const vault = this.app.vault;
 
     // Settings transport precedence: allowlisted config files use settings client
-    const configDir = ".obsidian";
-    if (commit.path.startsWith(`${configDir}/`) && this.settingsClient) {
-      const configRelativePath = commit.path.slice(configDir.length + 1);
+    const cfgDir = this.app.vault.configDir;
+    if (commit.path.startsWith(`${cfgDir}/`) && this.settingsClient) {
+      const configRelativePath = commit.path.slice(cfgDir.length + 1);
       const policy = isAllowlistedSettingsFile(configRelativePath);
       if (policy) {
         try {
@@ -932,8 +929,8 @@ export default class CrdtSyncPlugin extends Plugin {
 
           let mergedContent = serverResult.content;
           const existingFile = vault.getAbstractFileByPath(commit.path);
-          if (existingFile && "extension" in existingFile) {
-            const localContent = await vault.read(existingFile as TFile);
+          if (existingFile instanceof TFile) {
+            const localContent = await vault.read(existingFile);
             try {
               const localJson = JSON.parse(localContent);
               const remoteJson = JSON.parse(serverResult.content);
@@ -949,8 +946,8 @@ export default class CrdtSyncPlugin extends Plugin {
 
           await this.ensureParentDirs(commit.path);
           echo?.markWritten(commit.path);
-          if (existingFile && "extension" in existingFile) {
-            await vault.process(existingFile as TFile, () => mergedContent);
+          if (existingFile instanceof TFile) {
+            await vault.process(existingFile, () => mergedContent);
           } else {
             await vault.create(commit.path, mergedContent);
           }
@@ -985,24 +982,7 @@ export default class CrdtSyncPlugin extends Plugin {
                 this.hocuspocusClient.connect(commit.fileId);
               }
 
-              // Wait for sync
-              if (!entry.synced) {
-                await new Promise<void>((resolve, reject) => {
-                  const timeout = setTimeout(
-                    () => reject(new Error("Sync timeout")),
-                    30_000,
-                  );
-                  const checkSync = () => {
-                    if (entry.synced) {
-                      clearTimeout(timeout);
-                      resolve();
-                    } else {
-                      setTimeout(checkSync, 100);
-                    }
-                  };
-                  checkSync();
-                });
-              }
+              await this.waitForSync(entry);
 
               const text = entry.text.toString();
               await this.ensureParentDirs(commit.path);
@@ -1044,8 +1024,7 @@ export default class CrdtSyncPlugin extends Plugin {
           if (existing) {
             try {
               await this.ensureParentDirs(commit.path);
-              echo?.markWritten(oldPath);
-              echo?.markWritten(commit.path);
+              echo?.markRenamed(oldPath, commit.path);
               await vault.rename(existing, commit.path);
             } catch (err) {
               this.logger.error("Rename materialization failed", {
@@ -1063,7 +1042,7 @@ export default class CrdtSyncPlugin extends Plugin {
         const file = vault.getAbstractFileByPath(commit.path);
         if (file) {
           try {
-            echo?.markWritten(commit.path);
+            echo?.markDeleted(commit.path);
             await vault.delete(file);
           } catch (err) {
             this.logger.error("Delete materialization failed", {
@@ -1084,11 +1063,11 @@ export default class CrdtSyncPlugin extends Plugin {
           if (previousDigest === commit.contentDigest) return;
 
           const existing = vault.getAbstractFileByPath(commit.path);
-          if (existing && "extension" in existing) {
+          if (existing instanceof TFile) {
             try {
               const content = await this.blobClient.download(commit.fileId);
               echo?.markWritten(commit.path);
-              await vault.modifyBinary(existing as TFile, content);
+              await vault.modifyBinary(existing, content);
             } catch (err) {
               this.logger.error("Binary content-update failed", {
                 path: commit.path,
@@ -1114,30 +1093,14 @@ export default class CrdtSyncPlugin extends Plugin {
               this.hocuspocusClient.connect(commit.fileId);
             }
 
-            if (!entry.synced) {
-              await new Promise<void>((resolve, reject) => {
-                const timeout = setTimeout(
-                  () => reject(new Error("Sync timeout")),
-                  30_000,
-                );
-                const checkSync = () => {
-                  if (entry.synced) {
-                    clearTimeout(timeout);
-                    resolve();
-                  } else {
-                    setTimeout(checkSync, 100);
-                  }
-                };
-                checkSync();
-              });
-            }
+            await this.waitForSync(entry);
 
             const text = entry.text.toString();
             await this.ensureParentDirs(commit.path);
             echo?.markWritten(commit.path);
             const existingFile = vault.getAbstractFileByPath(commit.path);
-            if (existingFile && "extension" in existingFile) {
-              await vault.process(existingFile as TFile, () => text);
+            if (existingFile instanceof TFile) {
+              await vault.process(existingFile, () => text);
             } else {
               await vault.create(commit.path, text);
             }
@@ -1156,8 +1119,8 @@ export default class CrdtSyncPlugin extends Plugin {
             await this.ensureParentDirs(commit.path);
             echo?.markWritten(commit.path);
             const existing = vault.getAbstractFileByPath(commit.path);
-            if (existing && "extension" in existing) {
-              await vault.modifyBinary(existing as TFile, content);
+            if (existing instanceof TFile) {
+              await vault.modifyBinary(existing, content);
             } else {
               await vault.createBinary(commit.path, content);
             }
@@ -1177,9 +1140,13 @@ export default class CrdtSyncPlugin extends Plugin {
   /** Reconcile allowlisted settings files with the server. */
   private async reconcileSettings(): Promise<void> {
     if (!this.settingsClient || !this.localStore) return;
+    const localStore = this.localStore;
 
     try {
-      const { files } = rescanConfigDirectory(this.app.vault);
+      const { files } = rescanConfigDirectory(
+        this.app.vault,
+        this.app.vault.configDir,
+      );
       for (const { file, configRelativePath, policy } of files) {
         try {
           const serverResult =
@@ -1205,10 +1172,7 @@ export default class CrdtSyncPlugin extends Plugin {
           if (localDigest === serverResult.digest) continue; // In sync
 
           // Look up locally tracked anchor for this settings file
-          const allFiles = await this.localStore!.getAllFiles();
-          const tracked = allFiles.find(
-            (f) => f.path === file.path && !f.deleted,
-          );
+          const tracked = await localStore.getFileByPath(file.path);
           const localAnchor = tracked?.contentAnchor ?? 0;
           const serverAnchor = serverResult.contentAnchor ?? 0;
 
