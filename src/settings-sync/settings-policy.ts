@@ -146,6 +146,7 @@ function matchSettingsPattern(pattern: string, path: string): boolean {
 
   let pos = 0;
   for (let i = 0; i < parts.length; i++) {
+    // biome-ignore lint/style/noNonNullAssertion: i < parts.length guarantees defined
     const part = parts[i]!;
     if (i === 0) {
       if (!path.startsWith(part)) return false;

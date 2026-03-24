@@ -110,7 +110,7 @@ describe("18.5: self-origin suppression via wasPending", () => {
     // Submit a create intent
     client.create("test.md", "text");
     expect(sentIntents.length).toBe(1);
-    expect(sentIntents[0]!.operationId).toBe("op-123");
+    expect(sentIntents[0]?.operationId).toBe("op-123");
 
     // Simulate server commit for our own operation
     client.handleCommit({
@@ -126,7 +126,7 @@ describe("18.5: self-origin suppression via wasPending", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.wasPending).toBe(true);
+    expect(results[0]?.wasPending).toBe(true);
   });
 
   it("reports wasPending=false for remote commits", () => {
@@ -156,7 +156,7 @@ describe("18.5: self-origin suppression via wasPending", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.wasPending).toBe(false);
+    expect(results[0]?.wasPending).toBe(false);
   });
 });
 
@@ -184,7 +184,7 @@ describe("rename materialization captures old path before putFile", () => {
 
     // Step 3: materializeCommit uses prevPath, not store lookup
     expect(prevPath).toBe("old/name.md");
-    expect(store.get("file-1")!.path).toBe("new/name.md");
+    expect(store.get("file-1")?.path).toBe("new/name.md");
     // prevPath !== commit.path, so rename would execute
     expect(prevPath).not.toBe(commit.path);
   });
@@ -206,8 +206,8 @@ describe("rename materialization captures old path before putFile", () => {
 
     // Then look up — already overwritten
     const storedFile = store.get(commit.fileId);
-    expect(storedFile!.path).toBe("new/name.md"); // same as commit.path
-    expect(storedFile!.path === commit.path).toBe(true); // rename would NOT run
+    expect(storedFile?.path).toBe("new/name.md"); // same as commit.path
+    expect(storedFile?.path === commit.path).toBe(true); // rename would NOT run
   });
 });
 
@@ -319,7 +319,7 @@ describe("18.16: vault-identity binding", () => {
   });
 
   it("mismatch detection calls rebootstrap in source", async () => {
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     const source = fs.readFileSync(
       new URL("../../src/main.ts", import.meta.url),
       "utf-8",
@@ -350,7 +350,7 @@ describe("18.16: vault-identity binding", () => {
 describe("18.21: bootstrap uses replay-complete signal", () => {
   it("fetchCanonicalMetadata source does not contain setTimeout", async () => {
     // Read the actual source file and verify no setTimeout in fetchCanonicalMetadata
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     const source = fs.readFileSync(
       new URL("../../src/main.ts", import.meta.url),
       "utf-8",
@@ -430,7 +430,7 @@ describe("18.10: settings files never use Hocuspocus", () => {
   });
 
   it("settings path check precedes text/binary branch in source", async () => {
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     const source = fs.readFileSync(
       new URL("../../src/main.ts", import.meta.url),
       "utf-8",
@@ -438,6 +438,7 @@ describe("18.10: settings files never use Hocuspocus", () => {
     // In onFileModify, the settings check must come before text import
     const onModifyStart = source.indexOf("onFileModify: async (path)");
     const settingsCheck = source.indexOf(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: searching for literal template syntax in source text
       "normalized.startsWith(`${cfgDir}/`)",
       onModifyStart,
     );
@@ -450,7 +451,7 @@ describe("18.10: settings files never use Hocuspocus", () => {
 
 describe("18.24: full sync includes settings reconciliation", () => {
   it("triggerFullSync calls reconcileSettings in source", async () => {
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     const source = fs.readFileSync(
       new URL("../../src/main.ts", import.meta.url),
       "utf-8",
@@ -487,7 +488,7 @@ describe("18.29: offline progress save/load/clear pattern", () => {
   });
 
   it("offline progress is cleared after Hocuspocus sync in source", async () => {
-    const fs = await import("fs");
+    const fs = await import("node:fs");
     const source = fs.readFileSync(
       new URL("../../src/main.ts", import.meta.url),
       "utf-8",

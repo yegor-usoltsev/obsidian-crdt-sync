@@ -35,6 +35,7 @@ describe("text-sync", () => {
     it("skips import when content is unchanged", () => {
       const mgr = new TextDocManager({ logger });
       mgr.importText("file-1", "Hello");
+      // biome-ignore lint/style/noNonNullAssertion: just imported above
       const entry = mgr.get("file-1")!;
       let updateCount = 0;
       entry.doc.on("update", () => updateCount++);
@@ -65,6 +66,7 @@ describe("text-sync", () => {
       const mgr2 = new TextDocManager({ logger });
 
       mgr1.importText("file-1", "Hello from client 1");
+      // biome-ignore lint/style/noNonNullAssertion: just imported above
       const update = mgr1.encodeState("file-1")!;
 
       mgr2.applyUpdate("file-1", update);
